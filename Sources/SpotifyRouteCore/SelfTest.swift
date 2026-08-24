@@ -75,10 +75,14 @@ public enum SelfTest {
         // settings without also checking the wiring this comment sits next to.
         if peak <= 0.001 {
             return Outcome(callbacks: callbacks, peak: peak, passed: false,
-                           detail: "callbacks ran but every sample was silent — this almost "
-                                 + "always means the audio-capture permission is missing. "
-                                 + "Confirm the binary is running from the signed .app "
-                                 + "bundle and that Privacy settings allow audio recording.")
+                           detail: "callbacks ran but every sample was silent — this can mean "
+                                 + "either that the audio-capture permission is missing (confirm "
+                                 + "the binary is running from the signed .app bundle and that "
+                                 + "Privacy settings allow audio recording), or that the tap's "
+                                 + "input buffer landed at a different offset than AudioRouter "
+                                 + "assumed for this destination (see the C-1 fix in AudioRouter "
+                                 + "for why that offset varies by destination). Neither cause is "
+                                 + "more likely than the other from this signature alone.")
         }
         return Outcome(callbacks: callbacks, peak: peak, passed: true,
                        detail: "routed \(callbacks) buffers to \(destination.name), peak \(peak)")

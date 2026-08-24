@@ -21,15 +21,27 @@ if args.first == "--list-devices" {
 
 if args.first == "--selftest" {
     // Second argument is an optional destination UID; defaults to built-in speakers.
+    // A UID that WAS supplied but does not resolve must fail rather than silently
+    // fall back (I-5 review): built-in speakers is the one destination class where
+    // the C-1 tap-offset bug was invisible, so a typo would silently test the safe
+    // case and report PASS instead of surfacing the mistake.
     do {
         let devices = try OutputDevices.all()
         let requested = args.count > 1 ? args[1] : nil
-        guard let destination = requested.flatMap({ uid in devices.first { $0.uid == uid } })
-                ?? devices.first(where: { $0.uid == "BuiltInSpeakerDevice" })
-                ?? devices.first
-        else {
-            print("no output devices available")
-            exit(1)
+        let destination: OutputDevice
+        if let uid = requested {
+            guard let match = devices.first(where: { $0.uid == uid }) else {
+                throw RouteError.deviceNotFound(uid)
+            }
+            destination = match
+        } else {
+            guard let fallback = devices.first(where: { $0.uid == "BuiltInSpeakerDevice" })
+                    ?? devices.first
+            else {
+                print("no output devices available")
+                exit(1)
+            }
+            destination = fallback
         }
         print("self-testing against \(destination.name) (\(destination.uid))")
         let outcome = try SelfTest.run(destination: destination, seconds: 3)
