@@ -112,8 +112,8 @@ depending on either.
 ## Install
 
 ```bash
-git clone <this-repository's-clone-URL>
-cd SpotifyRoute
+git clone https://github.com/italobel/spotifyroute.git
+cd spotifyroute
 ./build.sh
 ```
 
