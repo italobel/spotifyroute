@@ -2,6 +2,7 @@ import Foundation
 
 var failures = 0
 failures += runVolumeFloorRuleTests()
+failures += runProtocolTests()
 
 if failures == 0 {
     print("ALL TESTS PASSED")
