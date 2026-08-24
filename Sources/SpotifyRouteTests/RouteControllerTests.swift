@@ -171,7 +171,7 @@ func runRouteControllerTests() -> Int {
         // and would have kept passing with the rebuild logic removed entirely.
         let devices = FakeDevices()
         devices.defaultUID = nil          // neither device is the default, so both are usable
-        let (c, _, router, _, _, _) = makeController(devices: devices)
+        let (c, _, router, _, _, audibility) = makeController(devices: devices)
         _ = c.handle(.use("SPEAKERS"))
         _ = c.handle(.on)
         try expectEqual(router.enableCalls, ["SPEAKERS"])
@@ -179,6 +179,9 @@ func runRouteControllerTests() -> Int {
         guard case .ok = c.handle(.use("IFACE")) else { throw TestFailure("expected ok") }
         try expectEqual(router.enableCalls, ["SPEAKERS", "IFACE"],
                         "switching destination while active issues a fresh enable for the new device")
+        try expectEqual(audibility.restored, ["SPEAKERS"],
+                        "the old destination is restored to its prior mute state, not left " +
+                        "unmuted forever, when a new destination takes over")
     }
 
     r.test("a router failure reports the error and does not claim success") {
@@ -192,12 +195,15 @@ func runRouteControllerTests() -> Int {
     }
 
     r.test("status reports the destination name, not just the UID") {
+        // Exact match, not `.contains("on")`: the off-state string is
+        // "off (destination: ...)", and "destinati-ON" contains "on" too, so a
+        // `.contains("on")` assertion here would pass whether this actually reached
+        // the active state or fell back to off — it could never fail either way.
         let (c, _, _, _, _, _) = makeController()
         _ = c.handle(.use("SPEAKERS"))
         _ = c.handle(.on)
         guard case .ok(let body) = c.handle(.status) else { throw TestFailure("expected ok") }
-        try expect(body.contains("on"), "includes the state")
-        try expect(body.contains("Built-in Speakers"), "includes a human-readable name")
+        try expectEqual(body, "on -> Built-in Speakers")
     }
 
     r.test("the chosen destination is readable without parsing display text") {
@@ -231,6 +237,44 @@ func runRouteControllerTests() -> Int {
         try expectEqual(router.enableCalls, ["SPEAKERS", "SPEAKERS"],
                         "enable is invoked once per .on call; FakeRouter records both, " +
                         "though the real AudioRouter treats a same-destination re-enable as a no-op")
+    }
+
+    r.test("on refuses once the persisted destination has become the system default") {
+        // `use` already refuses picking a destination that IS the default, but the
+        // default can drift after that: the destination was the built-in speakers
+        // while a USB interface was default, the interface gets unplugged or sleeps,
+        // and macOS promotes the speakers to default. `handleOn` must catch this too,
+        // not just `handleUse` — otherwise the system default gets unmuted/enabled.
+        let devices = FakeDevices()
+        let (c, store, router, _, _, audibility) = makeController(devices: devices)
+        _ = c.handle(.use("SPEAKERS"))   // fine: default is "IFACE" at this point
+        devices.defaultUID = "SPEAKERS"  // the system default has since changed
+        guard case .error(let msg) = c.handle(.on) else {
+            throw TestFailure("expected error, the destination is now the system default")
+        }
+        try expect(msg.lowercased().contains("default"), "explains why")
+        try expectEqual(router.enableCalls.count, 0, "must never enable a route onto the default")
+        try expectEqual(audibility.prepared.count, 0, "must never touch the default's mute/volume")
+        try expectEqual(store.settings.routeEnabled, false, "does not persist a refused activation")
+    }
+
+    r.test("reapply refuses re-applying once the destination has become the system default") {
+        // The same drift, but reached through reapply() — the path actually taken at
+        // login and on Spotify's launch, and the one the bug report calls out
+        // explicitly since a human never runs it directly.
+        let processes = FakeProcesses()
+        processes.running = false
+        let devices = FakeDevices()
+        let (c, _, router, _, _, audibility) = makeController(devices: devices, processes: processes)
+        _ = c.handle(.use("SPEAKERS"))
+        _ = c.handle(.on)                // arms: Spotify absent, default still "IFACE"
+        processes.running = true
+        devices.defaultUID = "SPEAKERS"  // system default changed while armed
+        c.reapply()
+        try expectEqual(router.enableCalls.count, 0,
+                        "reapply() must not enable a route onto the new system default")
+        try expectEqual(audibility.prepared.count, 0,
+                        "reapply() must not unmute/raise the volume of the system default")
     }
 
     return r.summarise()

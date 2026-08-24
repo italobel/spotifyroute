@@ -45,7 +45,8 @@ if args.first == "--selftest" {
             destination = fallback
         }
         print("self-testing against \(destination.name) (\(destination.uid))")
-        let outcome = try SelfTest.run(destination: destination, seconds: 3)
+        let outcome = try SelfTest.run(destination: destination,
+                                       seconds: SelfTest.defaultMeasurementSeconds)
         print("callbacks=\(outcome.callbacks) peak=\(outcome.peak)")
         print(outcome.passed ? "PASS — \(outcome.detail)" : "FAIL — \(outcome.detail)")
         exit(outcome.passed ? 0 : 1)

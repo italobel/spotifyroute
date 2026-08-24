@@ -106,10 +106,21 @@ public final class AudioRouter {
         try CA.check(AudioObjectGetPropertyData(tapID, &tapFormatAddr, 0, nil,
                                                 &tapFormatSize, &tapFormat),
                      "read tap format")
-        guard tapFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0 else {
+        // Checking only kAudioFormatFlagIsFloat is not what this guard's own error
+        // message claims: a Float64 tap, or a non-packed Float32 tap, also sets that
+        // flag and would sail through here, only to be misread by the IOProc's
+        // `assumingMemoryBound(to: Float.self)` below — producing a non-zero peak and
+        // a false PASS, exactly the failure class this guard exists to close. Also
+        // require 32 bits per channel and the packed flag so the guard actually
+        // verifies what it says it verifies.
+        guard tapFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+              tapFormat.mBitsPerChannel == 32,
+              tapFormat.mFormatFlags & kAudioFormatFlagIsPacked != 0
+        else {
             throw RouteError.coreAudio(
-                "tap format is not 32-bit float (flags=\(tapFormat.mFormatFlags)) — " +
-                "the IOProc's sample reinterpretation would be invalid", OSStatus(-1))
+                "tap format is not 32-bit packed float (flags=\(tapFormat.mFormatFlags), " +
+                "bitsPerChannel=\(tapFormat.mBitsPerChannel)) — the IOProc's sample " +
+                "reinterpretation would be invalid", OSStatus(-1))
         }
 
         // Where the tap's buffer lands in the aggregate's IOProc input list (C-1
@@ -123,7 +134,16 @@ public final class AudioRouter {
         // mic-to-speaker feedback path, and Spotify goes silent while still muted at
         // source. Computed once here, off the real-time thread, and captured by the
         // IOProc block below as a plain Int.
-        let tapInputOffset = Self.inputBufferCount(destination.id)
+        // A failed property read must not silently become 0 (C-1's exact failure
+        // mode): offset 0 is indistinguishable from "this destination has no input
+        // buffers of its own" and would put the IOProc right back on the destination's
+        // own microphone-to-output path the C-1 fix exists to avoid. The aggregate
+        // path below already fails loudly on a bad read; this one must too.
+        guard let tapInputOffset = Self.inputBufferCount(destination.id) else {
+            throw RouteError.coreAudio(
+                "could not read input buffer count for destination \(destination.uid)",
+                OSStatus(-1))
+        }
 
         // --- the aggregate: destination is clock master, tap is the input ---
         let config: [String: Any] = [
@@ -149,7 +169,10 @@ public final class AudioRouter {
         // Verify the offset against the aggregate's actual input buffer count, once,
         // before the IOProc ever runs. A wrong assumption here must fail loudly
         // rather than silently route the wrong buffer for the life of the route.
-        let aggregateInputBufferCount = Self.inputBufferCount(aggregateID)
+        guard let aggregateInputBufferCount = Self.inputBufferCount(aggregateID) else {
+            throw RouteError.coreAudio(
+                "could not read input buffer count for the aggregate device", OSStatus(-1))
+        }
         guard tapInputOffset < aggregateInputBufferCount else {
             throw RouteError.coreAudio(
                 "tap input offset (\(tapInputOffset)) is not less than the aggregate's " +
@@ -225,18 +248,23 @@ public final class AudioRouter {
     /// `kAudioDevicePropertyStreamConfiguration` — a buffer count, not a channel
     /// count. This is what determines how many buffers an aggregate inserts ahead of
     /// its tap's buffer(s) in the IOProc's input list (see C-1 in `enableUnchecked`).
-    private static func inputBufferCount(_ device: AudioObjectID) -> Int {
+    /// `nil` on a failed property read — never 0. A silent fallback to 0 here is
+    /// indistinguishable from a genuine "no input buffers" answer, and on the
+    /// destination path that silently reintroduces the exact bug C-1 fixed: the tap
+    /// offset lands on the destination's own input, copying its microphone to its own
+    /// output. Callers must fail loudly on `nil` rather than treat it as 0.
+    private static func inputBufferCount(_ device: AudioObjectID) -> Int? {
         var addr = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
             mScope: kAudioObjectPropertyScopeInput,
             mElement: kAudioObjectPropertyElementMain)
         var size: UInt32 = 0
         guard AudioObjectGetPropertyDataSize(device, &addr, 0, nil, &size) == noErr, size > 0
-        else { return 0 }
+        else { return nil }
         let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: 16)
         defer { raw.deallocate() }
         guard AudioObjectGetPropertyData(device, &addr, 0, nil, &size, raw) == noErr
-        else { return 0 }
+        else { return nil }
         let list = UnsafeMutableAudioBufferListPointer(raw.assumingMemoryBound(to: AudioBufferList.self))
         return list.count
     }

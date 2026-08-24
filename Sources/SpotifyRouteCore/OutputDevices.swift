@@ -32,10 +32,6 @@ public enum OutputDevices {
         }
     }
 
-    public static func find(uid: String) throws -> OutputDevice? {
-        try all().first { $0.uid == uid }
-    }
-
     /// Read ONLY so that a destination equal to the current default can be refused.
     /// The default device is never modified, and routing never depends on its identity.
     public static func currentDefaultUID() -> String? {

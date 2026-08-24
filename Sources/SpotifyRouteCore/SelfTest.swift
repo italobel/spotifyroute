@@ -23,6 +23,12 @@ public enum SelfTest {
     static let readinessPollIterations = 40
     static let readinessCeiling = readinessPollInterval * Double(readinessPollIterations)
 
+    /// The default measurement window passed to `run(destination:seconds:)`. Named so
+    /// that other consumers deriving a bound from this test's worst-case wall-clock
+    /// time (see `CommandServer.selfTestHandlerTimeout`) use the same number the run
+    /// actually sleeps for, rather than a second, independently hand-picked "3".
+    public static let defaultMeasurementSeconds: Double = 3
+
     /// The tone must survive the full readiness ceiling (the poll below can legitimately
     /// take up to `readinessCeiling` before giving up — that is still a "working, just
     /// slow" case by this function's own model, not a wedged one) *plus* the measurement
@@ -37,7 +43,8 @@ public enum SelfTest {
         return readinessCeiling + seconds + enableCushion
     }
 
-    public static func run(destination: OutputDevice, seconds: Double = 3) throws -> Outcome {
+    public static func run(destination: OutputDevice,
+                           seconds: Double = defaultMeasurementSeconds) throws -> Outcome {
         let toneURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("spotifyroute-selftest-\(getpid()).wav")
         try writeSineWAV(to: toneURL, seconds: toneSeconds(for: seconds), amplitude: 0.25)

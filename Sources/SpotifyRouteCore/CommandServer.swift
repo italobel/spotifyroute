@@ -16,22 +16,33 @@ public final class CommandServer {
     private var listenFD: Int32 = -1
     private var stopping = false
 
-    private var thread: Thread?
-
     /// How long the accept loop waits for the main thread to run a handler before
     /// giving up. A few seconds is generous for any legitimate Core Audio call while
     /// still short enough that a wedged main thread does not take the whole control
     /// channel down with it.
     private let defaultHandlerTimeout: TimeInterval = 3.0
 
+    /// Cushion for the part of `SelfTest.run` that `readinessCeiling` and
+    /// `defaultMeasurementSeconds` don't already account for: enabling the router
+    /// (creating the tap and the aggregate device) and the main-thread dispatch/
+    /// semaphore round trip in `runOnMainThread` below.
+    private static let selfTestEnableCushion: TimeInterval = 2.0
+
     /// `selftest` is the one command that is unconditionally longer than
-    /// `handlerTimeout`: SelfTest.run writes a short WAV, polls for the test player to
-    /// hold an output stream (up to 40 * 0.25s = 10s in the worst case), enables the
-    /// router, and then sleeps for its measurement window (3s) before returning. That
-    /// is comfortably north of 3s even in the common case, so `.selftest` gets its own,
-    /// much longer bound; every other command keeps the tight 3s bound that protects
-    /// the accept loop from a genuinely wedged main thread.
-    private let selfTestHandlerTimeout: TimeInterval = 15.0
+    /// `defaultHandlerTimeout`: SelfTest.run writes a short WAV, polls for the test
+    /// player to hold an output stream (up to `SelfTest.readinessCeiling` in the worst
+    /// case), enables the router, and then sleeps for its measurement window
+    /// (`SelfTest.defaultMeasurementSeconds`) before returning.
+    ///
+    /// Derived from those two named constants plus a cushion — not hand-picked —
+    /// specifically so that raising `SelfTest.readinessPollIterations` (or the
+    /// measurement window) cannot silently shrink this bound out from under a
+    /// genuinely successful, just-slow selftest run. `SelfTest.readinessCeiling`'s own
+    /// comment already tells this exact story once, for the tone length this timeout
+    /// must now also outlast: don't just pick a smaller number here either.
+    let selfTestHandlerTimeout: TimeInterval =
+        SelfTest.readinessCeiling + SelfTest.defaultMeasurementSeconds
+            + CommandServer.selfTestEnableCushion
 
     private func handlerTimeout(for command: Command) -> TimeInterval {
         switch command {
@@ -102,7 +113,6 @@ public final class CommandServer {
         let t = Thread { [weak self] in self?.acceptLoop() }
         t.name = "SpotifyRoute.CommandServer"
         t.start()
-        thread = t
     }
 
     /// Idempotent: safe to call more than once, and safe to call after a `start()`
@@ -198,7 +208,12 @@ public final class CommandServer {
             semaphore.signal()
         }
         guard semaphore.wait(timeout: .now() + handlerTimeout(for: command)) == .success else {
-            return .error("app busy — timed out waiting for a reply")
+            // The queued block on the main thread is still running at this point and
+            // will complete whatever it was doing after this timeout is reported — so
+            // the command may still end up applied even though this reply says it
+            // timed out. Say so, rather than letting the caller assume nothing happened.
+            return .error("app busy — timed out waiting for a reply; the command may " +
+                          "still be applied — check 'spotroute status'")
         }
         return result
     }

@@ -75,10 +75,19 @@ public final class RouteController {
             if uid == devices.currentDefaultUID() {
                 return .error("\(RouteError.destinationIsDefault(device.name))")
             }
+            // Captured before being overwritten so a route already running on the old
+            // destination can be restored to its prior mute state once the new one is
+            // applied below — otherwise the old device is left unmuted (and its
+            // priorMute bookkeeping leaked) for good. See handleOn()'s own restore.
+            let previousUID = settings.destinationUID
             settings.destinationUID = uid
             try store.save(settings)
             // If a route is already running, move it to the new destination.
             if settings.routeEnabled, router.isActive {
+                if let previousUID, previousUID != uid,
+                   let previousDevice = all.first(where: { $0.uid == previousUID }) {
+                    audibility.restore(previousDevice)
+                }
                 return handleOn()
             }
             return .ok("destination set to \(device.name)")
@@ -98,6 +107,21 @@ public final class RouteController {
             device = found
         } catch {
             return .error("\(error)")
+        }
+
+        // Refuse a destination that is (now) the system default. `handleUse` already
+        // refuses this at selection time, but the system default can drift out from
+        // under an already-persisted destination — e.g. the destination was the
+        // built-in speakers while a USB interface was default, the interface is then
+        // unplugged or sleeps, and macOS promotes the speakers to default. Without
+        // this check here, every activation path (an explicit `on`, and `reapply()` at
+        // login or on Spotify launch) would go on to call `audibility.prepare(device)`
+        // and `router.enable(destination:...)` on what is now the system default,
+        // unconditionally unmuting it and possibly raising its volume — exactly what
+        // this app promises never to do to the system default, "under any
+        // circumstance."
+        if uid == devices.currentDefaultUID() {
+            return .error("\(RouteError.destinationIsDefault(device.name))")
         }
 
         // Spotify absent is not a failure: remember the intent and apply on launch.
@@ -156,7 +180,8 @@ public final class RouteController {
               let device = try? devices.allOutputDevices().first(where: { $0.uid == uid })
         else { return .error("\(RouteError.noDestinationChosen)") }
         do {
-            let outcome = try SelfTest.run(destination: device, seconds: 3)
+            let outcome = try SelfTest.run(destination: device,
+                                           seconds: SelfTest.defaultMeasurementSeconds)
             return outcome.passed
                 ? .ok("selftest passed — \(outcome.detail)")
                 : .error("selftest failed — \(outcome.detail)")

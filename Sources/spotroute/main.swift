@@ -53,7 +53,9 @@ guard fd >= 0 else {
     FileHandle.standardError.write("error: could not create socket\n".data(using: .utf8)!)
     exit(1)
 }
-defer { close(fd) }
+// No `defer { close(fd) }` here: every path below terminates via `exit()`, which ends
+// the process immediately without running Swift `defer` blocks — the OS reclaims the
+// descriptor on process exit regardless. A `defer` here would be dead code.
 
 var addr = sockaddr_un()
 addr.sun_family = sa_family_t(AF_UNIX)
