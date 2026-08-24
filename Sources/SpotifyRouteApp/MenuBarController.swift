@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SpotifyRouteCore
 
 final class MenuBarController: NSObject, NSMenuDelegate {
@@ -29,8 +30,23 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             case .misconfigured: return ("exclamationmark.triangle", "needs configuring")
             }
         }()
-        statusItem.button?.image = NSImage(systemSymbolName: symbol,
-                                           accessibilityDescription: description)
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: description)
+        if let image {
+            statusItem.button?.image = image
+            statusItem.button?.title = ""
+        } else {
+            // A nil image here yields a zero-width, invisible status item — the exact
+            // "no menu bar icon" symptom this project has already chased once as a
+            // suspected environment issue. Whatever the cause (SF Symbol catalog
+            // trouble, a name typo introduced later, anything), do not let it fail
+            // silently: log loudly, and fall back to a short text label so the item
+            // still occupies real, clickable space in the menu bar.
+            FileHandle.standardError.write(("SpotifyRoute: NSImage(systemSymbolName: " +
+                "\"\(symbol)\") returned nil (description: \(description)) — falling back " +
+                "to a text label\n").data(using: .utf8)!)
+            statusItem.button?.image = nil
+            statusItem.button?.title = "SR:" + controller.status.shortLabel
+        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
