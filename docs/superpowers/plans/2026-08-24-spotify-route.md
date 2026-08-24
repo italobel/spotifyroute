@@ -2953,6 +2953,20 @@ Must contain, at minimum:
 - **Permission section, prominent**: the first run needs audio-recording permission. **If audio is silent but everything reports success, the permission is missing or was reset** — this is the single most confusing failure mode, because macOS grants the tap and then feeds it zeros. Also note that ad-hoc signing binds the grant to the built binary, so rebuilding may require re-granting.
 - **Troubleshooting**: `spotroute selftest` as the first diagnostic; "destination is the system default" refusal explained; nothing audible → check the destination's own volume and mute, which the keyboard volume keys do not control.
 - **How it works**, briefly: a Core Audio process tap with `mutedWhenTapped`, feeding a private aggregate device whose main sub-device is the destination. No kernel extension, no virtual audio driver, no modification of your default device.
+- **Security and privacy section (required).** Users are right to be wary of granting audio
+  capture. State plainly, and only what is true of this code: the tap is scoped to Spotify's
+  process alone (`stereoMixdownOfProcesses` with the resolved `com.spotify.client` process —
+  no global-tap variant appears anywhere); the tap and its aggregate device are both marked
+  private, so they are visible only to this process; captured audio is copied straight from
+  the input buffer to the output buffer and never written to disk, buffered, or accumulated —
+  only a peak amplitude float survives each callback; there are no network APIs in the source
+  at all and the only sockets are `AF_UNIX`; the only persisted file is a settings JSON holding
+  a device UID and a boolean; the only subprocess ever spawned is `/usr/bin/afplay`, and only
+  by the self-test, to play a tone it generated itself. Also state the honest limitation: the
+  *permission* macOS grants is not itself scoped to one app, so the guarantee rests on this
+  code being what it says — which is precisely why the project ships as source you can read.
+  Tell users they can revoke the permission granted to their terminal, if they ran the
+  unbundled binary, since the app carries its own grant and does not need the terminal's.
 - **Limitations**: Spotify only; one destination at a time; unverified on non-48 kHz and Bluetooth destinations (see Task 15's findings and update this).
 
 - [ ] **Step 3: Verify the README's own instructions from scratch**
@@ -2984,7 +2998,16 @@ The spec carries risks that were knowingly deferred. Close them and record what 
 - Modify: `docs/superpowers/specs/2026-08-24-spotify-route-design.md`
 - Modify: `README.md` (limitations section)
 
-- [ ] **Step 0: Is the `.app` bundle actually required for audio capture?**
+- [x] **Step 0: RESOLVED — the bundle and a granted permission are both required.**
+
+The human ran the unbundled binary from a plain Terminal on 2026-08-24, was prompted for
+permission, and granted it. So the requirement is real and the README documents the grant as
+a first-run step. What remains for this step is only to make sure the README's wording matches
+this outcome rather than either of the two wrong theories that preceded it.
+
+**Superseded original text follows for provenance:**
+
+- [ ] ~~Is the `.app` bundle actually required for audio capture?~~
 
 The project's foundational claim, currently **unverified**. Observed once early on, then
 unreproducible: the unbundled binary began passing the self-test too. Likely cause — the
