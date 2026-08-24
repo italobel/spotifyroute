@@ -35,6 +35,17 @@ to Spotify's process, not to any particular output, so if you change your system
 default — new headphones, a dock, AirPods, whatever — the route is unaffected,
 because it never knew what the default was in the first place.
 
+One more thing routing does deliberately: turning a route on unmutes the
+destination device, and raises its volume to 0.5 if it reads below 0.2 or can't be
+read at all. This exists because a device that isn't your system default keeps its
+own independent mute and volume state — the kind your keyboard's volume keys never
+reach — and an early version of this app failed an audible test outright because
+the destination was muted at the device level while reporting 1.000 volume.
+Turning the route off restores the destination's prior *mute* state, but
+deliberately not its prior volume: if you turned the volume up while listening,
+putting the old value back would silently undo that change. If you've deliberately
+muted a monitor or interface, know that routing Spotify to it will unmute it.
+
 ## Security and privacy
 
 Granting an app permission to record system audio is worth being cautious about, so
@@ -47,18 +58,23 @@ here is exactly what this code does and does not do:
 - Both the tap and the aggregate device it feeds are created with `isPrivate = true`,
   so they exist only for this process; nothing else on the system can see or attach
   to them.
-- Captured audio is copied directly from the input buffer to the output buffer
-  inside the IOProc callback and nowhere else. It is never written to disk, never
-  buffered, never accumulated. The only thing that survives a callback is a single
-  peak-amplitude float, used for the self-test's pass/fail measurement.
+- Captured Spotify audio itself is never written to disk, buffered, or
+  accumulated. It's copied directly from the input buffer to the output buffer
+  inside the IOProc callback and nowhere else — the only thing that survives past
+  a single callback is one peak-amplitude float, used for the self-test's
+  pass/fail measurement.
 - There are no network APIs anywhere in this codebase. The only sockets it opens
   are `AF_UNIX` — a local control socket at
   `~/Library/Application Support/SpotifyRoute/control.sock`, used only by the
   `spotroute` CLI on the same machine.
-- The only file this app ever writes is a small settings JSON holding a device UID
-  and a boolean (your chosen destination and whether routing is on).
+- The only file this app *persists* is a small settings JSON holding a device UID
+  and a boolean (your chosen destination and whether routing is on). The one other
+  thing it ever writes to disk is `spotroute selftest`'s own test tone: a WAV file
+  it synthesizes itself in the system temp directory, plays once, and deletes
+  immediately afterward. That file is a tone the app generated, never your
+  captured audio, and it does not outlive the self-test that created it.
 - The only subprocess this app ever spawns is `/usr/bin/afplay`, and only when you
-  run `spotroute selftest` — to play a test tone the app generates itself.
+  run `spotroute selftest` — to play that self-generated test tone.
 - There's no AppleScript, no Accessibility API, no screen-capture or window-listing
   API used anywhere. `Info.plist` declares exactly one permission
   (`NSAudioCaptureUsageDescription`), and the app ships with no entitlements at all.
@@ -96,14 +112,21 @@ depending on either.
 ## Install
 
 ```bash
-git clone https://github.com/italobelandria/SpotifyRoute.git
+git clone <this-repository's-clone-URL>
 cd SpotifyRoute
 ./build.sh
 ```
 
 This compiles the app and CLI, assembles `build/SpotifyRoute.app`, ad-hoc signs it,
 and drops `build/spotroute` next to it. No Developer ID or Apple Developer account
-is needed — ad-hoc signing is enough for a process tap.
+is needed — ad-hoc signing is enough for a process tap. Launch it with:
+
+```bash
+open ./build/SpotifyRoute.app
+```
+
+It's a menu-bar-only app (no Dock icon, no window) — look for its icon in the menu
+bar to open the destination picker and toggle.
 
 To install it somewhere permanent:
 
@@ -113,9 +136,12 @@ To install it somewhere permanent:
 
 This copies the app to `~/Applications/SpotifyRoute.app` and the CLI to
 `~/.local/bin/spotroute`. `~/Applications` needs no admin password and still shows
-up in Spotlight and Launchpad like any other app. Make sure `~/.local/bin` is on
-your `PATH`. `--install` refuses to run while an existing installed copy is
-running — quit it from its menu bar icon first, then re-run the command.
+up in Spotlight and Launchpad like any other app — launch it from there, or with
+`open ~/Applications/SpotifyRoute.app`. `~/.local/bin` is **not** on macOS's
+default `PATH`; check with `echo $PATH` and add it in your shell's profile if it's
+missing, or just call the CLI by its full path (`~/.local/bin/spotroute`).
+`--install` refuses to run while an existing installed copy is running — quit it
+from its menu bar icon first, then re-run the command.
 
 If you'd rather install system-wide (this needs an admin password):
 
@@ -190,21 +216,37 @@ sometimes non-ASCII characters, for example:
 AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:4,5
 ```
 
-**Always quote the UID** when you pass it to `use`. A worked example:
+**Always quote the UID** when you pass it to `use`. A worked example — the `list`
+output below is real, taken from the author's own machine:
 
 ```
 $ spotroute list
-MacBook Pro Speakers  [system default]
-    BuiltInSpeakerDevice
-RODECaster Pro II Main Stereo
+DELL S2721QS
+    10AC1111-0000-0000-0000-000000000000
+DELL S2722QC
+    10AC2222-0000-0000-0000-000000000000
+RODECaster Pro II Chat
+    AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:1,2
+RODECaster Pro II Main Stereo  [system default]
     AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:4,5
+MacBook Pro Speakers  [chosen destination]
+    BuiltInSpeakerDevice
+Camo Microphone
+    CamoAudioDevice_UID
+Splashtop Remote Sound
+    SplashtopRemoteSoundDevice_UID
 
-$ spotroute use "AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:4,5"
-destination set to RODECaster Pro II Main Stereo
+$ spotroute use "AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:1,2"
+destination set to RODECaster Pro II Chat
 
 $ spotroute on
 on
 ```
+
+Note that `RODECaster Pro II Main Stereo` is the system default here, so `use`
+targets `RODECaster Pro II Chat` instead — a different sub-device on the same
+interface. Trying to `use` the UID marked `[system default]` would be refused (see
+Troubleshooting).
 
 If SpotifyRoute isn't installed on your `PATH`, run it by its full path instead,
 e.g. `~/.local/bin/spotroute list` or `./build/spotroute list`.
@@ -220,8 +262,11 @@ where Spotify is actually going — and because both states run an explicit comm
 rather than a blind toggle, the key can't drift out of sync with reality the way a
 naive toggle button could.
 
-The Stream Deck needs to find `spotroute` — either put it on `PATH` (as
-`./build.sh --install` does) or point the Stream Deck action at its absolute path.
+The Stream Deck needs to find `spotroute`. `./build.sh --install` puts it at
+`~/.local/bin/spotroute`, which is not on macOS's default `PATH` — check whether
+yours includes it (`echo $PATH`) and add it if not, or simply point the Stream
+Deck action at the CLI's absolute path (`~/.local/bin/spotroute`, or
+`/usr/local/bin/spotroute` if you used the `sudo cp` one-liner instead).
 
 ## Troubleshooting
 
