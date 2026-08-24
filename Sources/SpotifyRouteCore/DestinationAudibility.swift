@@ -14,13 +14,16 @@ public protocol Audibility: AnyObject {
 /// destination was muted at the device level while reporting volume 1.000 — the audio
 /// was routed perfectly and inaudibly.
 public final class DestinationAudibility: Audibility {
-    /// Prior mute value per device UID, so restore() can put back exactly what it found.
+    /// Prior mute value per device UID, stored on first observe (first-observation-wins).
+    /// Subsequent prepare() calls on the same device before restore() do not overwrite this,
+    /// so the true original state is preserved even if prepare() is called multiple times.
     private var priorMute: [String: UInt32] = [:]
 
     public init() {}
 
     public func prepare(_ device: OutputDevice) {
-        if let existing = Self.readMute(device.id) {
+        // Record the mute state only on first observe; subsequent calls do not overwrite.
+        if priorMute[device.uid] == nil, let existing = Self.readMute(device.id) {
             priorMute[device.uid] = existing
         }
         _ = Self.writeMute(device.id, 0)
@@ -54,7 +57,7 @@ public final class DestinationAudibility: Audibility {
         return nil
     }
 
-    static func writeVolume(_ device: AudioObjectID, _ value: Float) -> Bool {
+    public static func writeVolume(_ device: AudioObjectID, _ value: Float) -> Bool {
         var wrote = CA.setFloat32(device, kAudioDevicePropertyVolumeScalar,
                                   scope: kAudioDevicePropertyScopeOutput,
                                   element: kAudioObjectPropertyElementMain, value)
@@ -78,7 +81,7 @@ public final class DestinationAudibility: Audibility {
         return nil
     }
 
-    static func writeMute(_ device: AudioObjectID, _ value: UInt32) -> Bool {
+    public static func writeMute(_ device: AudioObjectID, _ value: UInt32) -> Bool {
         var wrote = CA.setUInt32(device, kAudioDevicePropertyMute,
                                  scope: kAudioDevicePropertyScopeOutput,
                                  element: kAudioObjectPropertyElementMain, value)
