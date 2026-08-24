@@ -14,19 +14,33 @@ public enum SelfTest {
         public let detail: String
     }
 
+    /// How long each readiness-poll tick sleeps, and how many ticks it will run before
+    /// giving up. Named/multiplied out (rather than a bare `0..<40` with a bare `0.25`)
+    /// specifically so `toneSeconds(for:)` below can derive the tone length from the
+    /// same ceiling this loop actually enforces — see the comment there for why those
+    /// two numbers must never be allowed to drift apart again.
+    static let readinessPollInterval: Double = 0.25
+    static let readinessPollIterations = 40
+    static let readinessCeiling = readinessPollInterval * Double(readinessPollIterations)
+
+    /// The tone must survive the full readiness ceiling (the poll below can legitimately
+    /// take up to `readinessCeiling` before giving up — that is still a "working, just
+    /// slow" case by this function's own model, not a wedged one) *plus* the measurement
+    /// window that follows it, *plus* a small cushion for enabling the router itself.
+    /// Getting this wrong doesn't throw — it produces a real pass reported as "callbacks
+    /// ran but every sample was silent", because afplay's tone ran out mid-measurement.
+    /// That is the exact failure mode a previous, smaller margin here reintroduced, so:
+    /// before shortening this again, re-derive it from `readinessCeiling` and `seconds`,
+    /// don't just pick a smaller number.
+    static func toneSeconds(for seconds: Double) -> Double {
+        let enableCushion = 1.0
+        return readinessCeiling + seconds + enableCushion
+    }
+
     public static func run(destination: OutputDevice, seconds: Double = 3) throws -> Outcome {
         let toneURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("spotifyroute-selftest-\(getpid()).wav")
-        // The tone only has to outlast the measurement window plus the time it takes
-        // to get there: launching afplay, the readiness poll below (typically one or
-        // two 0.25s ticks), and enabling the router. `player.terminate()` cuts the
-        // tone off as soon as this function returns, so generating more than that is
-        // pure wasted CPU/IO on the caller's thread (this whole function runs
-        // synchronously on whichever thread calls it, which in the running app is the
-        // main thread) — 2s of startup margin is generous for the common case without
-        // padding out a file that is going to be killed early anyway.
-        let startupMargin = 2.0
-        try writeSineWAV(to: toneURL, seconds: seconds + startupMargin, amplitude: 0.25)
+        try writeSineWAV(to: toneURL, seconds: toneSeconds(for: seconds), amplitude: 0.25)
         defer { try? FileManager.default.removeItem(at: toneURL) }
 
         let player = Process()
@@ -44,8 +58,8 @@ public enum SelfTest {
         var pid = player.processIdentifier
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         var ready = false
-        for _ in 0..<40 {
-            Thread.sleep(forTimeInterval: 0.25)
+        for _ in 0..<readinessPollIterations {
+            Thread.sleep(forTimeInterval: readinessPollInterval)
             if AudioObjectGetPropertyData(CA.system, &addr,
                                           UInt32(MemoryLayout<pid_t>.size), &pid,
                                           &size, &processObject) == noErr,
