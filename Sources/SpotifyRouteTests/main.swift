@@ -4,6 +4,7 @@ var failures = 0
 failures += runVolumeFloorRuleTests()
 failures += runProtocolTests()
 failures += runSettingsTests()
+failures += runDestinationAudibilityTests()
 
 if failures == 0 {
     print("ALL TESTS PASSED")
