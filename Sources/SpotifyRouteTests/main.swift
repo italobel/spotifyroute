@@ -1,0 +1,12 @@
+import Foundation
+
+var failures = 0
+failures += runVolumeFloorRuleTests()
+
+if failures == 0 {
+    print("ALL TESTS PASSED")
+    exit(0)
+} else {
+    print("\(failures) TEST(S) FAILED")
+    exit(1)
+}
