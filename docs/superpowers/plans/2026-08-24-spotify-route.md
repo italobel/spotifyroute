@@ -16,7 +16,7 @@ Every task's requirements implicitly include this section.
 
 - **Minimum macOS: 14.2.** Verified only on 26.6 — the README must say exactly that, never implying tested support below it.
 - **macOS 26-only APIs** (`bundleIDs`, `isProcessRestoreEnabled`) must sit behind `if #available(macOS 26.0, *)` and never be required for correctness.
-- **A `.app` bundle carrying `NSAudioCaptureUsageDescription` is mandatory for any process tap.** An unbundled binary creates the tap, reports a valid format, delivers correctly sized buffers, and every sample is zero — no error, no prompt. Therefore *all* Core Audio tap code runs inside `SpotifyRouteApp`; `spotroute` is only a socket client.
+- **All Core Audio tap code runs inside `SpotifyRouteApp`; `spotroute` is only a socket client.** This structure holds regardless of the permission question below — one owner for every audio object, and a thin client. It was originally motivated by an observation that an unbundled binary creates the tap, reports a valid format, delivers correctly sized buffers, and returns all-zero samples with no error and no prompt. **That observation is now UNVERIFIED**: it became unreproducible in the development environment, where every process descends from an app already holding audio-capture permission and TCC's responsible-process attribution appears to extend it across the process tree, masking the boundary for any code. Task 15 Step 0 settles it from a clean process tree. The architecture does not depend on the answer; the README does.
 - **Ad-hoc signing only:** `codesign --force --sign - --identifier com.italo.spotifyroute`. No Developer ID, no Apple Developer Program.
 - **Never modify the system default output device, and never let routing depend on its identity.** The tap is not bound to a source device; there is no "source device" concept anywhere in the code. Exactly one permitted read exists, in `OutputDevices.currentDefaultUID()`, solely to refuse routing a device to itself.
 - **Destination identity is the device UID**, never its name. Names collide and change.
@@ -80,7 +80,7 @@ Nothing can be tested until there is a way to run tests. This task ends with a r
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `TestRunner(_ name: String)`, `TestRunner.test(_ label: String, _ body: () throws -> Void)`, `TestRunner.finish() -> Never`, `expect(_ cond: Bool, _ msg: String) throws`, `expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ msg: String) throws`, `VolumeFloorRule.desiredVolume(current: Float?) -> Float?`.
+- Produces: `TestRunner(_ name: String)`, `TestRunner.test(_ label: String, _ body: () throws -> Void)`, `TestRunner.summarise() -> Int` (returns the failure count so `main.swift` can aggregate several suites), `expect(_ cond: Bool, _ msg: String) throws`, `expectEqual<T: Equatable>(_ actual: T, _ expected: T, _ msg: String) throws`, `VolumeFloorRule.desiredVolume(current: Float?) -> Float?`.
 
 - [ ] **Step 1: Write `Package.swift`**
 
@@ -1442,7 +1442,7 @@ Expected: **FAIL**, reporting callbacks but silent samples. This is correct and 
 
 Expected: **PASS**, with `peak` near `0.25` — the amplitude the tone was generated at. A quiet 440 Hz tone is audible for ~3 seconds.
 
-If this reports silence: grant audio recording permission to SpotifyRoute in System Settings → Privacy & Security, then retry. Remember the ad-hoc TCC grant binds to the binary's cdhash, so a rebuild can require re-granting.
+If this reports silence, the audio-capture permission is the likely cause — but the bundled-vs-unbundled boundary could not be reproduced in the development environment (see Task 15 Step 0), so verify rather than assume.
 
 - [ ] **Step 7: Verify unit tests still pass**
 
@@ -2955,6 +2955,43 @@ The spec carries risks that were knowingly deferred. Close them and record what 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-08-24-spotify-route-design.md`
 - Modify: `README.md` (limitations section)
+
+- [ ] **Step 0: Is the `.app` bundle actually required for audio capture?**
+
+The project's foundational claim, currently **unverified**. Observed once early on, then
+unreproducible: the unbundled binary began passing the self-test too. Likely cause — the
+development shell's ancestor application already holds audio-capture permission, and TCC
+attributes the request to that responsible process, extending the grant across the whole
+process tree. If so, the boundary is unobservable from that shell for any code at all.
+
+This matters for the README, not the architecture. Keeping all Core Audio inside the
+bundled app is right regardless, so no code hangs on the answer. What hangs on it is
+whether the README tells people to grant a permission, and whether "reports success but
+plays silence" is correctly explained as the first thing to check.
+
+Settle it from a **clean process tree** — a Terminal.app window opened by hand, not a
+shell spawned by any editor, IDE, or agent tool:
+
+```bash
+cd /path/to/SpotifyRoute
+swift build
+swift run SpotifyRouteApp --selftest
+./build.sh
+./build/SpotifyRoute.app/Contents/MacOS/SpotifyRouteApp --selftest
+```
+
+Three outcomes, each with a different consequence:
+
+- **Unbundled fails, bundled passes** — the original finding is real. Keep the README's
+  permission section prominent and restore the claim as asserted fact.
+- **Both pass** — the bundle is not required for capture. Rewrite the claim as "a bundle is
+  required for a *distributable* app and remains the right structure, but is not a
+  precondition for the tap," and demote the README's permission language to a short
+  troubleshooting note. Telling users to grant a permission they do not need is its own bug.
+- **Both fail** — permission genuinely is absent in a clean tree. Document the exact grant
+  procedure in the README, verified by performing it.
+
+Either way, the README must state what was actually tested and where.
 
 - [ ] **Step 1: Risk 2 — the playback-start edge**
 

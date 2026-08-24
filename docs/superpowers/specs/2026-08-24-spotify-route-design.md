@@ -45,7 +45,7 @@ because it never knew. The only device ever named is the destination.
 
 Verified facts from the probe, not assumptions.
 
-1. **A `.app` bundle with `NSAudioCaptureUsageDescription` is mandatory.** The identical
+1. **A `.app` bundle with `NSAudioCaptureUsageDescription` is mandatory.** *(STATUS: OBSERVED ONCE, NOW UNVERIFIED — see plan Task 15 Step 0. It became unreproducible; the development shell's ancestor app holds audio-capture permission and TCC appears to extend it across the process tree, masking the boundary for any code. The architecture is unaffected; the README is not.)* The identical
    code as a bare CLI binary creates the tap successfully, reports a valid stream
    format, delivers correctly-sized buffers — and every sample is zero. No error, no
    permission prompt. As a signed `.app` bundle with that Info.plist key, the same code
@@ -216,8 +216,13 @@ splits by what is genuinely testable:
 
 ## Risks
 
-1. **TCC grant binds to cdhash.** Rebuilding may silently drop permission and resurface
-   as silence. Mitigated by `selftest` asserting non-zero signal, so it fails loudly.
+1. **Whether audio capture needs a bundle, a grant, or neither is UNRESOLVED.** The
+   cdhash-binding theory stated here originally was wrong, and so was the follow-up theory
+   that no grant is needed at all — both were inferred inside a shell whose ancestor app
+   already held the permission, which contaminates any such experiment. Resolved by plan
+   Task 15 Step 0, from a clean process tree. Mitigated in code regardless: `selftest`
+   asserts measured non-zero signal, so whatever the truth is, a broken route fails loudly
+   rather than silently.
 2. **`isRunningOutput` 0→1 edge while the aggregate is live** is unverified — whether a
    running aggregate picks up Spotify starting from fully paused. Mitigation: watch the
    property and rebuild on the edge; rebuild is already measured as cheap and reliable.
