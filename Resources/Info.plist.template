@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>com.italo.spotifyroute</string>
+  <key>CFBundleExecutable</key><string>SpotifyRouteApp</string>
+  <key>CFBundleName</key><string>SpotifyRoute</string>
+  <key>CFBundleDisplayName</key><string>SpotifyRoute</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>14.2</string>
+  <key>LSUIElement</key><true/>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>SpotifyRoute captures Spotify's audio so it can play through the output device you choose, leaving your system default output unchanged.</string>
+</dict>
+</plist>
