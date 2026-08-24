@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SpotifyRouteCore
 
@@ -70,4 +71,61 @@ if args.first == "--show-audibility" {
     }
 }
 
-print("SpotifyRouteApp — menu bar arrives in Task 11")
+// ---- normal launch: menu bar app ----
+
+/// Stops the control socket on graceful termination so the socket file does not
+/// outlive the process. `MenuBarController.quit()` tears down audio state but has no
+/// reference to `server` (it is constructed before `server` exists); routing the stop
+/// through `applicationWillTerminate` covers every graceful-quit path — the menu item,
+/// Dock/Activity Monitor "Quit" — without changing MenuBarController's reviewed source.
+/// A `kill -9`/SIGKILL still bypasses this, same as any Cocoa app; CommandServer.start()
+/// already unlinks a stale socket left behind by that case.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let onTerminate: () -> Void
+    init(onTerminate: @escaping () -> Void) { self.onTerminate = onTerminate }
+    func applicationWillTerminate(_ notification: Notification) { onTerminate() }
+}
+
+let store = FileSettingsStore(url: FileSettingsStore.defaultURL)
+let deviceListing = LiveDeviceListing()
+let controller = RouteController(store: store,
+                                 router: AudioRouter(),
+                                 devices: deviceListing,
+                                 processes: LiveProcessLocating(),
+                                 audibility: DestinationAudibility())
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)   // no Dock icon; LSUIElement also set in Info.plist
+
+let menuBar = MenuBarController(controller: controller, devices: deviceListing)
+
+let server = CommandServer(socketURL: CommandServer.defaultSocketURL) { command in
+    let reply = controller.handle(command)
+    menuBar.refreshGlyph()
+    return reply
+}
+let appDelegate = AppDelegate(onTerminate: { server.stop() })
+app.delegate = appDelegate
+do {
+    try server.start()
+} catch {
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = "SpotifyRoute could not start its control socket"
+    alert.informativeText = "\(error)\n\nThe menu bar still works, but the spotroute "
+                          + "command and your Stream Deck button will not."
+    alert.runModal()
+}
+
+let watcher = SpotifyWatcher(
+    onAppeared: { controller.reapply(); menuBar.refreshGlyph() },
+    onVanished: { menuBar.refreshGlyph() },
+    onPlaybackStarted: { controller.reapply(); menuBar.refreshGlyph() }
+)
+watcher.start()
+
+// Apply a route persisted from the last session.
+controller.reapply()
+menuBar.refreshGlyph()
+
+app.run()

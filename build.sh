@@ -9,7 +9,13 @@ APP="$OUT/SpotifyRoute.app"
 BUNDLE_ID="com.italo.spotifyroute"
 
 echo "==> Building ($CONFIG)"
-swift build -c "$CONFIG" --package-path "$ROOT"
+# Build only the two shipping products, not the whole package: SpotifyRouteTests uses
+# @testable import, which SwiftPM only supports when the imported module is compiled
+# with -enable-testing. That happens automatically for debug builds but not for
+# release, so `swift build -c release` with no --product filter fails partway through
+# on the test executable even though neither shipping product depends on it.
+swift build -c "$CONFIG" --package-path "$ROOT" --product SpotifyRouteApp
+swift build -c "$CONFIG" --package-path "$ROOT" --product spotroute
 BIN="$(swift build -c "$CONFIG" --package-path "$ROOT" --show-bin-path)"
 
 echo "==> Assembling $APP"
