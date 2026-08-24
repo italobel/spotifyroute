@@ -42,8 +42,14 @@ cp "$BIN/SpotifyRouteApp" "$APP/Contents/MacOS/SpotifyRouteApp"
 
 echo "==> Ad-hoc signing"
 # Ad-hoc signing is sufficient for Core Audio process taps; no Developer ID needed.
-# The TCC grant binds to the binary's cdhash, so rebuilding may require re-granting
-# audio permission. A silent route almost always means exactly that.
+# Confirmed (not speculation): the TCC audio-capture grant binds to the binary's
+# cdhash. Rebuilding from unchanged source reproduces the identical binary and
+# cdhash, so no new prompt; any change to compiled source produces a new cdhash,
+# which macOS treats as a brand new app requiring a fresh grant. That matters for
+# the login agent: after a rebuild that changed code, the next login-agent-started
+# launch happens with no human present to answer that prompt, so it may come up
+# without audio permission and route silently. `spotroute selftest` is the
+# diagnostic — it fails loudly instead of passing on silence.
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 codesign -dv "$APP" 2>&1 | grep -E 'Identifier|Signature' || true
 
@@ -78,6 +84,20 @@ EOF2
 # script produces next, built with different content and, after re-signing, a
 # different cdhash. Copying to a stable path outside build/ avoids that.
 install_to_applications() {
+  # Refuse to replace a bundle that is currently running, rather than lean on the
+  # fact that unlinking a directory out from under an already-open executable
+  # happens to be harmless on this codebase today (one Bundle.main access, at
+  # launch, before any lazy bundle-resource read). That safety is implicit, not
+  # enforced, and a bad habit to bake into an installer a stranger might run
+  # against their own live install.
+  if pgrep -f "$INSTALLED_APP/Contents/MacOS/SpotifyRouteApp" >/dev/null 2>&1; then
+    echo "==> $INSTALLED_APP is currently running — not overwriting it."
+    echo "    Quit SpotifyRoute first (menu bar icon, or:"
+    echo "      osascript -e 'tell application id \"$BUNDLE_ID\" to quit'"
+    echo "    ), then re-run this command."
+    return 1
+  fi
+
   echo "==> Installing app to $INSTALLED_APP"
   mkdir -p "$HOME/Applications"
   rm -rf "$INSTALLED_APP"
@@ -89,7 +109,9 @@ install_to_applications() {
 }
 
 if [ "${1:-}" = "--install" ] || [ "${1:-}" = "--install-login-agent" ]; then
-  install_to_applications
+  if ! install_to_applications; then
+    exit 1
+  fi
   cat <<EOF3
 
 Installed:
