@@ -2813,6 +2813,23 @@ picker but disabled, since routing a device to itself is refused."
 - Consumes: the built app bundle (Task 2).
 - Produces: `./build.sh --install-login-agent` and `./build.sh --uninstall-login-agent`.
 
+- [ ] **Step 0: Single-instance guard (found in live use, not in the original plan)**
+
+A menu-bar app the user can double-click WILL get launched twice, and a login agent makes
+that likelier still — the agent starts one copy and the user opens another. Observed live:
+two instances ran simultaneously after an install. `CommandServer.start()` defensively
+unlinks any existing socket before binding, so the SECOND instance captures the control
+channel and the FIRST is orphaned: still holding its process tap, its aggregate device and
+a possibly-muted destination, unreachable by the CLI, and its eventual teardown unlinks the
+socket the second instance now owns.
+
+Add a startup check before any audio or socket setup: if another instance of this bundle
+identifier is already running, activate it and exit rather than stealing the socket.
+`NSRunningApplication.runningApplications(withBundleIdentifier:)` filtered against the
+current process is the straightforward route. Verify by launching twice and confirming the
+second exits without disturbing the first, and that the first still answers `spotroute
+status` afterwards.
+
 - [ ] **Step 1: Write the LaunchAgent template**
 
 `Resources/com.italo.spotifyroute.plist.template`:
@@ -2865,6 +2882,17 @@ fi
 ```
 
 Note: the agent launches the binary inside the bundle, not the bundle, so the process keeps its bundle identity and therefore its audio-capture permission.
+
+- [ ] **Step 2b: Add an install target to build.sh**
+
+`build.sh` does `rm -rf` on its own output directory every run, so the bundle it produces is
+scratch — a user who double-clicks it loses the app on the next build. Add
+`./build.sh --install` copying the bundle to `~/Applications` (user-writable, needs no
+password, appears in Spotlight and Launchpad) and the CLI to a stated location. Mention
+`/Applications` as an optional `sudo` one-liner rather than doing it, since it needs an
+admin password. A locally built bundle carries no quarantine attribute, so there is no
+Gatekeeper prompt either way — state that in the output, because it is the main reason this
+project prefers build-from-source.
 
 - [ ] **Step 3: Install and verify**
 
