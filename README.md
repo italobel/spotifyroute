@@ -284,7 +284,7 @@ make an inaudible hardware-controlled device audible, and it won't tell you when
 that's the problem — check the device's own physical volume control. This is a
 hardware limitation, not a bug in the app.
 
-**`"<device>" is already your system default; routing it to itself only adds
+**`<device> is already the system default; routing it to itself only adds
 latency`.** This is refused on purpose — sending Spotify to the device it's already
 going to would only add processing overhead with no benefit. Pick a different
 destination, or change your system default if you actually want the RODECaster (or
@@ -301,6 +301,36 @@ whatever it is) to be default.
   untested.
 - No notarized, prebuilt release — build from source with `./build.sh`.
 - The system default output device is never modified, under any circumstance.
+- **Picking up playback that starts after Spotify was fully paused is only partially
+  verified.** The code that watches for this only reacts to the paused→playing
+  transition itself, never to every poll tick while already playing — confirmed by
+  reading the watcher, and by a 35-second soak that saw it rebuild the route exactly
+  once (at startup) and never again across 17 poll ticks with Spotify sitting paused.
+  What that soak could not exercise is the other half: actually pressing play and
+  confirming audio arrives at the destination within the ~3-second poll window. That
+  has not been observed end to end. If music doesn't start after you press play with
+  the route armed, run `spotroute selftest` to check whether the route itself is
+  silently broken before assuming this is the cause.
+- **Non-48 kHz destinations work, but can show a small, occasional amplitude wobble.**
+  Tested with a 44.1 kHz virtual device (`spotroute selftest`, 8 runs): every run passed
+  with real, non-zero audio, but about 1 run in 4 measured a peak roughly 7–8% above the
+  source tone — a matching-rate 48 kHz destination showed no such outliers across the
+  same number of runs. This looks like ordinary sample-rate-conversion ripple (drift
+  compensation is already enabled), not corruption, but it means a non-48 kHz
+  destination is not guaranteed to sound bit-identical to a matching-rate one.
+- **Bluetooth destinations are untested.** No Bluetooth audio device was available
+  during development to route to. A Bluetooth headset would exercise the same
+  destination-has-its-own-input code path already verified safe above, but it also adds
+  real wireless latency and clock behavior a virtual device can't reproduce — treat a
+  Bluetooth destination as unverified until you've confirmed it yourself with
+  `spotroute selftest`.
+- **Behavior across an actual reboot is untested.** The nearest thing verified is
+  force-restarting the app through launchd (`launchctl kickstart -k`) without
+  rebooting, which confirmed the audio-capture permission survives that kind of
+  relaunch and `spotroute selftest` still passes afterward. A genuine reboot with the
+  login agent installed has not been run. If you use
+  `./build.sh --install-login-agent`, check `spotroute status` and `spotroute selftest`
+  after your next real reboot rather than assuming it came back correctly.
 
 ## License
 

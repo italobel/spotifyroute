@@ -222,16 +222,83 @@ splits by what is genuinely testable:
    a shell whose ancestor already held the permission. The README must therefore document the
    grant as a required first-run step. Mitigated in code regardless: `selftest` asserts
    measured non-zero signal, so a missing grant fails loudly rather than silently.
-2. **`isRunningOutput` 0→1 edge while the aggregate is live** is unverified — whether a
-   running aggregate picks up Spotify starting from fully paused. Mitigation: watch the
-   property and rebuild on the edge; rebuild is already measured as cheap and reliable.
-3. **Arbitrary destinations introduce sample-rate and latency variation.** Phase 0 only
-   exercised a 48 kHz built-in device. A 44.1 kHz or Bluetooth destination may expose
-   drift or latency the probe never hit. Drift compensation is on; verify against at
-   least one non-48 kHz and one Bluetooth destination during implementation.
+2. **PARTIALLY VERIFIED: the `isRunningOutput` 0→1 edge is confirmed edge-triggered by
+   code, but a genuine playback-start pickup was never observed end-to-end.** Reading
+   `SpotifyWatcher.poll()` confirms the check is `if producing && !wasProducingOutput` —
+   a false→true transition, not a level check, so it cannot re-fire on every tick while
+   Spotify keeps playing. A 35-second, 17-tick soak during Task 12 (persisted route
+   active, Spotify paused, temporary logging added and fully reverted before commit)
+   measured this directly: `reapply()`/`router.enable()` fired exactly once, at startup,
+   and never again across those 17 ticks, every one of which observed `producing=false`.
+   That establishes the no-false-positive half — an already-working route does not
+   spuriously rebuild while Spotify sits paused. It does **not** establish the positive
+   half: whether pressing play after a genuine pause actually reaches
+   `onPlaybackStarted()` and recovers audio within one poll interval. Exercising that
+   requires either fully quitting Spotify or driving playback via AppleScript (which
+   triggers its own Automation permission prompt); both were out of bounds for a machine
+   in active use, so **this half remains genuinely untested** — record it as such rather
+   than as verified. The mitigation described for an insufficient `reapply()` — tearing
+   down and rebuilding when `statistics().callbacks == 0` a second after the edge — has
+   not been implemented, because there is no measurement yet showing `reapply()` needs it.
+3. **VERIFIED with measurements: a 44.1 kHz destination does not corrupt or silence the
+   route, but shows a small, intermittent amplitude artefact a matching-rate destination
+   does not; Bluetooth remains untested.** Tested `Splashtop Remote Sound`
+   (`SplashtopRemoteSoundDevice_UID`, nominal 44100 Hz — a virtual device, so this could
+   be exercised directly with no audible side effect) against `MacBook Pro Speakers`
+   (`BuiltInSpeakerDevice`, 48000 Hz) as a same-rate control, using `spotroute selftest`'s
+   fixed 0.25-amplitude, 3-second measurement.
+
+   - Splashtop: `destinationInputBufferCount=1`, computed `tapInputOffset=1`,
+     `aggregateInputBufferCount=2` on the built aggregate — Splashtop is an input-bearing
+     virtual device, so this is genuinely the offset-1 branch of the C-1 tap-offset fix, the
+     same branch a Bluetooth headset would exercise. Across 8 selftest runs: 6 measured
+     peak ≈0.2500 (within 0.1% of the source amplitude), 2 measured peak ≈0.267–0.269
+     (≈7–8% above it).
+   - Control (BuiltInSpeakerDevice, matching rate): `destinationInputBufferCount=0`,
+     `tapInputOffset=0`, `aggregateInputBufferCount=1`. Across 8 selftest runs, every peak
+     fell in a tight 0.2500–0.2510 band — no outliers.
+
+   Every run on both destinations passed (peak always far above the 0.001 failure
+   threshold — no zero signal, no error). The intermittent overshoot appears only on the
+   rate-mismatched destination, which is the expected signature of
+   `kAudioSubTapDriftCompensationKey` performing asynchronous sample-rate conversion:
+   interpolation ripple depends on the phase alignment between the tap's native 48 kHz
+   clock and the destination's 44.1 kHz clock at the instant of measurement, which is
+   exactly why it shows up in some runs and not others rather than every run. This is a
+   real, measured finding, not a failure: drift compensation keeps the route working and
+   correctly shaped, but does not make a resampled destination bit-identical to a
+   matching-rate one. If this proves audible in practice, `kAudioSubTapDriftCompensationQualityKey`
+   is the next lever, unexercised here.
+
+   **Bluetooth is untested and could not be tested in this session**: no Bluetooth audio
+   device was connected on this machine (confirmed via `system_profiler
+   SPBluetoothDataType` — only a Bluetooth mouse was paired), and pairing one purely to
+   test was out of scope. A Bluetooth headset is, like Splashtop, an input-bearing
+   device, so it would exercise the same offset-1 tap-position path already measured
+   above — but it would additionally introduce real over-the-air latency and a genuinely
+   asynchronous clock that a virtual loopback device cannot reproduce, so Bluetooth's
+   latency and clock-drift behavior remain a real, open gap, not merely a formality.
 4. **Only verified on macOS 26.6** while claiming 14.2. The README must say exactly
    that rather than implying tested support.
-5. **Login-agent and permission interaction at boot** is unverified.
+5. **UNTESTED: a genuine reboot was not performed and must not be inferred as passing
+   from anything measured so far.** No reboot was run — rebooting this machine was
+   explicitly out of bounds for this task. The closest available evidence is Task 13's
+   `launchctl kickstart -k` test: after quitting the running app and force-restarting it
+   through launchd (not `open`, not the CLI), `spotroute status` answered immediately and
+   `spotroute selftest` measured real audio (peak ≈0.26) through the launchd-started
+   process, confirming the audio-capture permission survives a launchd-initiated relaunch
+   within the same login session. That is the closest proxy available short of rebooting,
+   but it is not the same test: a real reboot also exercises TCC/launchd state after a
+   cold boot, the relative order in which SpotifyRoute's login agent and Spotify's own
+   login item get launched, and whether a route marked `routeEnabled` reapplies correctly
+   whichever of those launches first. None of that has been observed — the login agent
+   was not installed for this task and was left untouched. Whoever runs the real test
+   should specifically check: (1) whether a permission prompt reappears after reboot — it
+   should not, since the grant is tied to the app bundle's stable ad-hoc signature, not the
+   login session; (2) whether `reapply()` still fires correctly if Spotify's own login
+   item happens to launch after SpotifyRoute's; (3) `spotroute selftest` immediately after
+   login, to catch a state where the route looks active but is silently carrying zero
+   signal.
 
 ## Build and distribution
 
