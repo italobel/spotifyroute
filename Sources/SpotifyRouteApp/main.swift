@@ -54,4 +54,20 @@ if args.first == "--selftest" {
     }
 }
 
+if args.first == "--show-audibility" {
+    do {
+        for device in try OutputDevices.all() {
+            let volume = DestinationAudibility.readVolume(device.id)
+            let mute = DestinationAudibility.readMute(device.id)
+            let volumeText = volume.map { String(format: "%.3f", $0) } ?? "n/a"
+            let muteText = mute.map { $0 == 1 ? "MUTED" : "unmuted" } ?? "n/a"
+            print("\(device.name): volume=\(volumeText) \(muteText)")
+        }
+        exit(0)
+    } catch {
+        print("error: \(error)")
+        exit(1)
+    }
+}
+
 print("SpotifyRouteApp — menu bar arrives in Task 11")
