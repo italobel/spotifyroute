@@ -13,7 +13,7 @@ spotroute — control SpotifyRoute
   spotroute toggle          flip between the two
   spotroute status          show current state
   spotroute list            list available output devices
-  spotroute use <uid>       choose the destination device
+  spotroute use "<uid>"     choose the destination device (quote UID if it contains spaces)
   spotroute selftest        verify audio really flows (uses the app's permission)
 
 Stream Deck: use a Multi Action Switch whose two states run
@@ -22,7 +22,7 @@ Stream Deck: use a Multi Action Switch whose two states run
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard !arguments.isEmpty else {
-    print(usage)
+    FileHandle.standardError.write((usage + "\n").data(using: .utf8)!)
     exit(2)
 }
 if arguments.first == "-h" || arguments.first == "--help" {
@@ -57,8 +57,16 @@ defer { close(fd) }
 
 var addr = sockaddr_un()
 addr.sun_family = sa_family_t(AF_UNIX)
+
+// Check path length against sun_path buffer (104 bytes on Darwin)
+let pathBytes = socketPath.utf8
+if pathBytes.count >= MemoryLayout<sockaddr_un>.size - MemoryLayout.offset(of: \sockaddr_un.sun_path)! {
+    FileHandle.standardError.write("error: socket path too long: \(socketPath)\n".data(using: .utf8)!)
+    exit(1)
+}
+
 withUnsafeMutableBytes(of: &addr.sun_path) { raw in
-    socketPath.utf8.enumerated().forEach { raw[$0.offset] = $0.element }
+    pathBytes.enumerated().forEach { raw[$0.offset] = $0.element }
 }
 let size = socklen_t(MemoryLayout<sockaddr_un>.size)
 let connected = withUnsafePointer(to: &addr) { pointer in
@@ -81,8 +89,22 @@ var response = Data()
 var buffer = [UInt8](repeating: 0, count: 4096)
 while true {
     let count = read(fd, &buffer, buffer.count)
-    if count <= 0 { break }
-    response.append(contentsOf: buffer[0..<count])
+    if count == 0 {
+        // EOF - connection closed, no more data
+        break
+    } else if count < 0 {
+        // Error on read
+        if errno == EINTR {
+            // Interrupted; retry
+            continue
+        } else {
+            FileHandle.standardError.write("error: read failed: \(String(cString: strerror(errno)))\n"
+                .data(using: .utf8)!)
+            exit(1)
+        }
+    } else {
+        response.append(contentsOf: buffer[0..<count])
+    }
 }
 
 let text = String(data: response, encoding: .utf8) ?? ""
