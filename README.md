@@ -51,10 +51,14 @@ muted a monitor or interface, know that routing Spotify to it will unmute it.
 Granting an app permission to record system audio is worth being cautious about, so
 here is exactly what this code does and does not do:
 
-- The tap only ever captures Spotify. It's built from
+- In normal use, the tap only ever captures Spotify. It's built from
   `CATapDescription(stereoMixdownOfProcesses:)` against the single resolved
   `com.spotify.client` process object — there is no global/system-wide tap variant
-  anywhere in the source.
+  anywhere in the source. The one exception is `spotroute selftest`, which builds a
+  second, identical tap against `/usr/bin/afplay` — the app's own subprocess, playing
+  a tone the app generated itself (see below) — so it can verify the whole routing
+  path without needing Spotify to be running. It never taps anything you didn't
+  launch.
 - Both the tap and the aggregate device it feeds are created with `isPrivate = true`,
   so they exist only for this process; nothing else on the system can see or attach
   to them.
@@ -209,6 +213,32 @@ spotroute — control SpotifyRoute
   spotroute selftest        verify audio really flows (uses the app's permission)
 ```
 
+`selftest` blocks for up to ~13 seconds while it plays and measures a test tone —
+during that window the menu bar freezes and any other command (including a Stream
+Deck press) queues behind it until it finishes.
+
+### App binary diagnostic flags
+
+The app binary itself also accepts a few flags, run directly rather than through the
+menu bar or the `spotroute` CLI — useful for debugging without needing the app already
+running:
+
+```bash
+~/Applications/SpotifyRoute.app/Contents/MacOS/SpotifyRouteApp --list-devices
+~/Applications/SpotifyRoute.app/Contents/MacOS/SpotifyRouteApp --show-audibility
+~/Applications/SpotifyRoute.app/Contents/MacOS/SpotifyRouteApp --selftest [uid]
+```
+
+- `--list-devices` — lists every output device with its UID and sample rate, marking
+  the current system default. Read-only.
+- `--show-audibility` — lists every output device's current volume and mute state, as
+  the app itself reads them. Read-only.
+- `--selftest [uid]` — the same self-test `spotroute selftest` runs, but standalone: it
+  needs no running app instance, and takes an optional destination UID (defaulting to
+  the built-in speakers). Not read-only — it plays an audible tone through the given
+  destination, and blocks the caller for the same up-to-~13-second worst case as
+  `spotroute selftest` above.
+
 Device UIDs are not friendly strings — real ones contain spaces, colons, and
 sometimes non-ASCII characters, for example:
 
@@ -307,23 +337,50 @@ whatever it is) to be default.
   reading the watcher, and by a 35-second soak that saw it rebuild the route exactly
   once (at startup) and never again across 17 poll ticks with Spotify sitting paused.
   What that soak could not exercise is the other half: actually pressing play and
-  confirming audio arrives at the destination within the ~3-second poll window. That
+  confirming audio arrives at the destination within the ~2-second poll window. That
   has not been observed end to end. If music doesn't start after you press play with
   the route armed, run `spotroute selftest` to check whether the route itself is
   silently broken before assuming this is the cause.
-- **Non-48 kHz destinations work, but can show a small, occasional amplitude wobble.**
-  Tested with a 44.1 kHz virtual device (`spotroute selftest`, 8 runs): every run passed
-  with real, non-zero audio, but about 1 run in 4 measured a peak roughly 7–8% above the
-  source tone — a matching-rate 48 kHz destination showed no such outliers across the
-  same number of runs. This looks like ordinary sample-rate-conversion ripple (drift
-  compensation is already enabled), not corruption, but it means a non-48 kHz
-  destination is not guaranteed to sound bit-identical to a matching-rate one.
-- **Bluetooth destinations are untested.** No Bluetooth audio device was available
-  during development to route to. A Bluetooth headset would exercise the same
-  destination-has-its-own-input code path already verified safe above, but it also adds
-  real wireless latency and clock behavior a virtual device can't reproduce — treat a
-  Bluetooth destination as unverified until you've confirmed it yourself with
-  `spotroute selftest`.
+- **Non-48 kHz destinations work, but intermittently show a peak 6.8–7.6% above the
+  source tone — the cause is not established.** Tested with a 44.1 kHz virtual device
+  (`spotroute selftest`, 8 runs): every run passed with real, non-zero audio, but 2 of
+  the 8 measured peak ≈0.267–0.269 against a source amplitude of 0.25 (6.8–7.6% high); a
+  matching-rate 48 kHz destination showed no such outliers across the same number of
+  runs. An earlier version of this document attributed the overshoot to
+  sample-rate-conversion ripple; that explanation does not survive its own numbers and
+  has been retracted here. The total SRC error for a 440 Hz tone at these rates is
+  bounded around 0.04% (the intersample-peak deficit is `1 − cos(π·440/48000) ≈
+  0.0004`) — two orders of magnitude below what was measured. The intermittency argues
+  against a phase-dependent steady-state effect too: `Metrics.peak` is a monotone
+  running max over roughly 132,000 samples per run, so a true steady-state ripple would
+  visit its worst phase in every run and should have produced 8 outliers out of 8, not
+  2. Benign candidates (the tone's onset transient, the HAL's own output-start ramp) and
+  one non-benign candidate (an occasional drift-compensation sample slip, which would be
+  audible) remain undistinguished, so "not corruption" is not yet an earned conclusion.
+  The falsifiable test that would settle it: log the callback index at which the peak
+  occurs, or reset `peak` after the first N callbacks — if the outliers vanish, it was
+  the tone's onset transient. Until that test is run, treat a non-48 kHz destination as
+  not guaranteed to sound bit-identical to a matching-rate one.
+- **Bluetooth destinations are untested, including which code path they exercise.** No
+  Bluetooth audio device was available during development to route to. An earlier
+  version of this document asserted that a Bluetooth headset is input-bearing and
+  therefore exercises the same offset-1 destination-has-its-own-input path already
+  verified safe with Splashtop above — that claim is retracted: a Bluetooth device in
+  A2DP (output-only) mode typically presents zero input buffers of its own, the same
+  offset-0 path as the built-in speakers, and is input-bearing only in HFP/SCO mode.
+  Which branch an actual Bluetooth destination takes is not known. It also adds real
+  wireless latency and clock behavior a virtual device can't reproduce — treat a
+  Bluetooth destination as completely unverified until you've confirmed it yourself
+  with `spotroute selftest`.
+- **If the destination device disappears while routing, the app does not currently
+  notice.** There is no `AudioObjectAddPropertyListener` (or any other device-removal
+  watcher) anywhere in the source. `spotroute status` keeps reporting the route as
+  active even though the aggregate device and its IOProc are now pointed at a device
+  that no longer exists, and nothing tears the route down or falls back to the system
+  default automatically. This is the most likely real-world failure mode — unplugging
+  a USB interface or the destination going to sleep — so if music stops unexpectedly,
+  check `spotroute status` and `spotroute selftest` rather than assuming the route is
+  still working because status still says "on".
 - **Behavior across an actual reboot is untested.** The nearest thing verified is
   force-restarting the app through launchd (`launchctl kickstart -k`) without
   rebooting, which confirmed the audio-capture permission survives that kind of

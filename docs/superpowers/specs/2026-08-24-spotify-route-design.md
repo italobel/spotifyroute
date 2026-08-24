@@ -126,7 +126,7 @@ SpotifyRoute.app            LSUIElement menu-bar app, ad-hoc signed
 ├── CommandServer           Unix domain socket listener
 └── MenuBarController        status item, toggle, destination picker, state glyph
 
-spotroute                   CLI: on | off | toggle | status | list | use <uid|name>
+spotroute                   CLI: on | off | toggle | status | list | use <uid> | selftest
 ```
 
 **Socket:** `~/Library/Application Support/SpotifyRoute/control.sock`. Line-delimited
@@ -137,26 +137,33 @@ and is not reachable off-machine.
 
 ### Component responsibilities
 
-- **AudioRouter** — owns every Core Audio object. `enable(destinationUID:)` / `disable()`
-  / `isActive`. Idempotent: enabling while active with the same destination is a no-op;
-  with a different destination it rebuilds. Never throws across its boundary; failures
-  come back as a typed result the menu bar can surface.
+- **AudioRouter** — owns every Core Audio object. `enable(destination:processObject:)` /
+  `disable()` / `isActive`. Idempotent: enabling while active with the same destination
+  is a no-op; with a different destination it rebuilds. `enable` does throw across its
+  boundary (a typed `RouteError`) — callers (`RouteController`) catch it and turn it
+  into the typed `Reply` the menu bar and CLI surface; `disable()` itself is the
+  non-throwing half, safe to call at any point including mid-failure teardown.
 - **OutputDevices** — lists devices having output channels, with name + UID; resolves a
   persisted UID back to a live device; reports when the chosen destination disappears.
   UID is the persisted identity, never the name, since names collide and change.
 - **DestinationAudibility** — makes the chosen destination actually audible. Concrete
   rule so this is not left to interpretation: unmute unconditionally; read the current
-  volume and raise it to 0.5 **only if below 0.2**; never lower an already-audible
-  volume. On disable, restore the prior *mute* state only — deliberately not the prior
-  volume, so a volume the user adjusted while listening isn't undone behind their back.
-  Its own unit because Finding 5 makes it a correctness requirement, not a nicety.
+  volume and raise it to 0.5 **if it is below 0.2, or if it cannot be read at all** —
+  an unreadable volume is treated as inaudible rather than left alone, since a device
+  this app can't confirm is audible is not one it can promise to make audible some
+  other way; never lower an already-audible volume. On disable, restore the prior
+  *mute* state only — deliberately not the prior volume, so a volume the user adjusted
+  while listening isn't undone behind their back. Its own unit because Finding 5 makes
+  it a correctness requirement, not a nicety.
 - **Settings** — persisted route state and destination UID, plus an `armed` notion for
   when Spotify isn't running yet. Pure logic, no Core Audio, fully unit-testable.
 - **SpotifyWatcher** — `NSWorkspace` launch/terminate observers to re-apply an armed
   route when Spotify reappears (required, not optional, since `isProcessRestoreEnabled`
-  is macOS 26+ and the floor is 14.2). Also owns the
-  `kAudioProcessPropertyIsRunningOutput` listener backing Risk 2's mitigation: on a 0→1
-  edge with the route active and no callbacks observed, ask AudioRouter to rebuild.
+  is macOS 26+ and the floor is 14.2). Also polls `kAudioProcessPropertyIsRunningOutput`
+  for the false→true edge (Spotify resuming after a full pause) to re-apply an armed
+  route. **Not implemented** (see Risk 2): a listener that checks
+  `AudioRouter.statistics().callbacks == 0` after that edge and rebuilds if so — there
+  is no measurement yet showing `reapply()` needs that extra mitigation.
 - **CommandServer** — parses commands, delegates. Knows nothing about audio.
 - **MenuBarController** — glyph reflecting current state, manual toggle, and a
   destination submenu listing available output devices with the current one checked.
@@ -191,11 +198,11 @@ cannot drift out of sync with reality. No Stream Deck plugin development needed.
 | Spotify not running | Store state as *armed*; apply on launch. Reply `ok armed`. |
 | Spotify quits while routed | Tear down; stay armed; re-apply on relaunch. |
 | Spotify paused (no output stream) | No callbacks; nothing to route. Not an error. |
-| Destination device unplugged | Disable the route, keep the preference, notify. Spotify falls back to the default on its own. |
+| Destination device unplugged while routing | **Not implemented.** There is no `AudioObjectAddPropertyListener` or other device-removal watcher anywhere in the code — this was the plan, not what shipped. The route is not disabled, the preference is not changed, and nothing notifies; `spotroute status` keeps reporting the route as active against a device that no longer exists. Documented as a known limitation in the README rather than silently promised here. |
 | Persisted destination missing at launch | Stay off, show it in the menu, don't silently pick a substitute. |
-| Destination == current default device | Refuse with a clear message; routing a device to itself only adds latency. |
+| Destination == current default device | Refuse with a clear message; routing a device to itself only adds latency. Enforced on every activation path (`use`, `on`, and `reapply()`), not just at selection time — the system default can drift onto an already-persisted destination after selection. |
 | Destination sample rate ≠ tap rate | Drift compensation is enabled; if it still fails, report rather than emit garbage (Risk 3). |
-| Audio capture permission missing | Detect zero signal while `isRunningOutput == 1`; menu-bar warning linking to Privacy settings. |
+| Audio capture permission missing | **Not automatically detected.** There is no automatic zero-signal detector or menu-bar warning tied to this condition — the warning-triangle glyph in the menu bar is for a *misconfigured* route (no destination chosen), unrelated. The only way to notice a missing permission is to run `spotroute selftest` (or the app binary's `--selftest` flag) manually; it measures peak amplitude and reports FAIL when it is at or below 0.001. |
 | Aggregate/tap creation fails | Log OSStatus as FourCC, revert to off, notify. Never sit in a half-state. |
 
 ## Testing
@@ -208,8 +215,9 @@ splits by what is genuinely testable:
   rule as a pure function. This is where logic bugs actually live.
 - **`spotroute selftest`** — an on-hardware integration command. Plays a synthesized
   tone from a known process, routes it to the chosen destination, asserts measured
-  output RMS is non-zero. Turns "is audio really flowing" into a command rather than a
-  guess, and would have caught Finding 1 immediately.
+  output peak amplitude is non-zero (not RMS — `AudioRouter.Metrics` tracks a running
+  peak, never an RMS/energy measure). Turns "is audio really flowing" into a command
+  rather than a guess, and would have caught Finding 1 immediately.
 - **Manual checklist** — audible check; confirm a call app still lands on the default;
   quit/relaunch Spotify; unplug/replug the destination; change the system default while
   routed; reboot.
@@ -240,44 +248,66 @@ splits by what is genuinely testable:
    than as verified. The mitigation described for an insufficient `reapply()` — tearing
    down and rebuilding when `statistics().callbacks == 0` a second after the edge — has
    not been implemented, because there is no measurement yet showing `reapply()` needs it.
-3. **VERIFIED with measurements: a 44.1 kHz destination does not corrupt or silence the
-   route, but shows a small, intermittent amplitude artefact a matching-rate destination
-   does not; Bluetooth remains untested.** Tested `Splashtop Remote Sound`
+3. **MEASURED, cause not established: a 44.1 kHz destination does not corrupt or
+   silence the route, but intermittently shows a peak 6.8–7.6% above the source tone
+   that a matching-rate destination does not; Bluetooth remains untested, including
+   which code path it takes.** Tested `Splashtop Remote Sound`
    (`SplashtopRemoteSoundDevice_UID`, nominal 44100 Hz — a virtual device, so this could
    be exercised directly with no audible side effect) against `MacBook Pro Speakers`
    (`BuiltInSpeakerDevice`, 48000 Hz) as a same-rate control, using `spotroute selftest`'s
    fixed 0.25-amplitude, 3-second measurement.
 
+   **Provenance of the buffer-count numbers below** (Risk 2 discloses its temporary
+   logging; this risk previously did not): `AudioRouter.inputBufferCount` is `private`
+   and unlogged in shipping code, so no shipping code path — `spotroute selftest`
+   included — can print `destinationInputBufferCount`, `tapInputOffset`, or
+   `aggregateInputBufferCount`. These values were obtained the same way Risk 2's were:
+   temporary logging added to `AudioRouter` for this investigation and fully reverted
+   before commit. They are not observable from the shipped binary.
+
    - Splashtop: `destinationInputBufferCount=1`, computed `tapInputOffset=1`,
      `aggregateInputBufferCount=2` on the built aggregate — Splashtop is an input-bearing
-     virtual device, so this is genuinely the offset-1 branch of the C-1 tap-offset fix, the
-     same branch a Bluetooth headset would exercise. Across 8 selftest runs: 6 measured
-     peak ≈0.2500 (within 0.1% of the source amplitude), 2 measured peak ≈0.267–0.269
-     (≈7–8% above it).
+     virtual device, so this exercises the offset-1 branch of the C-1 tap-offset fix.
+     Across 8 selftest runs: 6 measured peak ≈0.2500 (within 0.1% of the source
+     amplitude), 2 measured peak ≈0.267–0.269 (6.8–7.6% above it — not "roughly 7–8%" as
+     an earlier version of this document rounded it).
    - Control (BuiltInSpeakerDevice, matching rate): `destinationInputBufferCount=0`,
      `tapInputOffset=0`, `aggregateInputBufferCount=1`. Across 8 selftest runs, every peak
      fell in a tight 0.2500–0.2510 band — no outliers.
 
    Every run on both destinations passed (peak always far above the 0.001 failure
-   threshold — no zero signal, no error). The intermittent overshoot appears only on the
-   rate-mismatched destination, which is the expected signature of
-   `kAudioSubTapDriftCompensationKey` performing asynchronous sample-rate conversion:
-   interpolation ripple depends on the phase alignment between the tap's native 48 kHz
-   clock and the destination's 44.1 kHz clock at the instant of measurement, which is
-   exactly why it shows up in some runs and not others rather than every run. This is a
-   real, measured finding, not a failure: drift compensation keeps the route working and
-   correctly shaped, but does not make a resampled destination bit-identical to a
-   matching-rate one. If this proves audible in practice, `kAudioSubTapDriftCompensationQualityKey`
-   is the next lever, unexercised here.
+   threshold — no zero signal, no error).
 
-   **Bluetooth is untested and could not be tested in this session**: no Bluetooth audio
-   device was connected on this machine (confirmed via `system_profiler
-   SPBluetoothDataType` — only a Bluetooth mouse was paired), and pairing one purely to
-   test was out of scope. A Bluetooth headset is, like Splashtop, an input-bearing
-   device, so it would exercise the same offset-1 tap-position path already measured
-   above — but it would additionally introduce real over-the-air latency and a genuinely
-   asynchronous clock that a virtual loopback device cannot reproduce, so Bluetooth's
-   latency and clock-drift behavior remain a real, open gap, not merely a formality.
+   **The sample-rate-conversion-ripple explanation for the overshoot is retracted — it
+   does not survive its own numbers.** Two objections. First, the total SRC error for a
+   440 Hz tone at these rates is bounded around 0.04% (the intersample-peak deficit is
+   `1 − cos(π·440/48000) ≈ 0.0004`), two orders of magnitude below the measured
+   6.8–7.6%. Second, the intermittency argues *against* a phase-dependent steady-state
+   effect rather than for one: `Metrics.peak` is a monotone running max over roughly
+   132,000 samples per 3-second run, so a genuine steady-state ripple tied to
+   clock-phase alignment would visit its worst phase within every run and should have
+   produced 8 outliers out of 8, not 2. The honest status of this finding is **cause
+   not established**, not "ordinary SRC ripple, not corruption." Candidates not yet
+   distinguished: the tone's onset transient (benign), the HAL's own output-start ramp
+   (benign), and an occasional drift-compensation sample slip (not benign — this would
+   be audible). The falsifiable test that would distinguish them: log the callback
+   index at which the peak occurs across several runs, or reset `peak` after the first
+   N callbacks — if the outliers vanish, it was the tone's onset transient. That test
+   has not been run. Until it is, "not corruption" is not an earned conclusion, and a
+   non-48 kHz destination should not be assumed bit-identical to a matching-rate one.
+
+   **The Bluetooth claim in an earlier version of this document is also retracted.**
+   That version asserted a Bluetooth headset is input-bearing and would therefore
+   exercise the same offset-1 path measured above with Splashtop. That is wrong as
+   stated: a Bluetooth device in A2DP (output-only) mode typically presents zero input
+   buffers of its own — the same offset-0 path as `BuiltInSpeakerDevice` — and is
+   input-bearing only in HFP/SCO mode. **Bluetooth is untested and which branch it
+   takes is unknown.** No Bluetooth audio device was connected on this machine
+   (confirmed via `system_profiler SPBluetoothDataType` — only a Bluetooth mouse was
+   paired), and pairing one purely to test was out of scope for this task. A Bluetooth
+   destination would also introduce real over-the-air latency and a genuinely
+   asynchronous clock that no virtual loopback device reproduces, so its latency and
+   clock-drift behavior remain a real, open gap on top of the branch question.
 4. **Only verified on macOS 26.6** while claiming 14.2. The README must say exactly
    that rather than implying tested support.
 5. **UNTESTED: a genuine reboot was not performed and must not be inferred as passing

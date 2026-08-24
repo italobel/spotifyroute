@@ -54,7 +54,10 @@ public final class DestinationAudibility: Audibility {
         }
         _ = writeMuteFunc(device.id, 0)
 
-        // Raise the volume only if it is inaudible; never lower an audible one.
+        // Raise the volume if it is inaudible (below the floor) OR unreadable at all
+        // (VolumeFloorRule.desiredVolume treats `nil` the same as "below the floor" —
+        // a device this app can't confirm is audible is not one it can leave alone);
+        // never lower an already-audible one.
         if let target = VolumeFloorRule.desiredVolume(current: readVolumeFunc(device.id)) {
             _ = writeVolumeFunc(device.id, target)
         }
