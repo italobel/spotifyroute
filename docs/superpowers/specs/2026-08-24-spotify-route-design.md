@@ -101,9 +101,27 @@ aggregate:
                                            kAudioSubTapDriftCompensationKey: true }]
 
 ioproc:
-  zero all output buffers first, then for i in 0..<min(inBufs, outBufs):
-    memcpy(out[i], in[i], min(byteSize))
+  // offset computed ONCE at enable time, off the real-time thread — NOT per callback
+  offset = inputBufferCount(destinationDeviceID)   // see C-1 note below
+  zero all output buffers first, then for i in 0..<outBufs:
+    j = offset + i
+    if j < inBufs: memcpy(out[i], in[j], min(byteSize))
+    // else: out[i] stays silent (already zeroed above)
 ```
+
+**C-1 — why `offset` exists, and why this recipe must never regress to `in[i]`:** the
+aggregate places a destination's OWN input buffers (if it has any — a mic on a USB
+interface, a RODECaster's inputs) ahead of the tap's buffer(s) in the IOProc's input
+list. A destination with no input channels of its own puts the tap at index 0, but an
+input-bearing destination puts its own hardware input first and the tap after it.
+Indexing `in[i]` unconditionally (offset always 0) was exactly the Critical bug found
+during this project: on an input-bearing destination it silently copies the
+destination's own microphone to its own output instead of the tapped Spotify audio —
+on a RODECaster that is a mic-to-speaker feedback path, with Spotify itself still muted
+at the source and no error anywhere. `offset` must be verified against the aggregate's
+actual input buffer count before the IOProc ever runs, and the lookup that computes it
+must fail loudly (never silently default to 0) if it cannot read the count — seeing 0
+must always mean "verified zero," never "read failed."
 
 Swift API gotchas found the hard way: the property is `muteBehavior` (not `isMuted`),
 `isProcessRestoreEnabled` (not `processRestoreEnabled`), `isPrivate` (not `privateTap`).
@@ -119,7 +137,7 @@ Two binaries, so the Stream Deck never touches Core Audio.
 ```
 SpotifyRoute.app            LSUIElement menu-bar app, ad-hoc signed
 ├── AudioRouter             tap + aggregate + IOProc lifecycle
-├── OutputDevices           enumerate output devices; resolve + watch UIDs
+├── OutputDevices           enumerate output devices; resolve a persisted UID on demand
 ├── DestinationAudibility   unmute + volume floor for the chosen destination
 ├── Settings                route state + destination UID, persisted
 ├── SpotifyWatcher          launch/quit observation; isRunningOutput edges

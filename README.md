@@ -54,11 +54,14 @@ here is exactly what this code does and does not do:
 - In normal use, the tap only ever captures Spotify. It's built from
   `CATapDescription(stereoMixdownOfProcesses:)` against the single resolved
   `com.spotify.client` process object — there is no global/system-wide tap variant
-  anywhere in the source. The one exception is `spotroute selftest`, which builds a
-  second, identical tap against `/usr/bin/afplay` — the app's own subprocess, playing
-  a tone the app generated itself (see below) — so it can verify the whole routing
-  path without needing Spotify to be running. It never taps anything you didn't
-  launch.
+  anywhere in the source. The one exception is the self-test, reachable from any of
+  its three entry points (`spotroute selftest`, the menu bar's "Run Self-Test…" item,
+  and the app binary's `--selftest` flag): all three build a second, identical tap
+  against `/usr/bin/afplay` — the app's own subprocess, playing a tone the app
+  generated itself (see below) — so the whole routing path can be verified without
+  needing Spotify to be running. The tap's target is always either Spotify or that
+  self-spawned subprocess; it is never a process the app didn't launch itself for one
+  of these two specific purposes.
 - Both the tap and the aggregate device it feeds are created with `isPrivate = true`,
   so they exist only for this process; nothing else on the system can see or attach
   to them.
@@ -77,8 +80,9 @@ here is exactly what this code does and does not do:
   it synthesizes itself in the system temp directory, plays once, and deletes
   immediately afterward. That file is a tone the app generated, never your
   captured audio, and it does not outlive the self-test that created it.
-- The only subprocess this app ever spawns is `/usr/bin/afplay`, and only when you
-  run `spotroute selftest` — to play that self-generated test tone.
+- The only subprocess this app ever spawns is `/usr/bin/afplay`, and only during the
+  self-test — from any of its three entry points (`spotroute selftest`, the menu bar,
+  or `--selftest`) — to play that self-generated test tone.
 - There's no AppleScript, no Accessibility API, no screen-capture or window-listing
   API used anywhere. `Info.plist` declares exactly one permission
   (`NSAudioCaptureUsageDescription`), and the app ships with no entitlements at all.
