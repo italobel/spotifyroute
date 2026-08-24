@@ -18,6 +18,7 @@ public final class SpotifyWatcher {
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
     private var wasProducingOutput = false
+    private var isRunning = false
 
     /// 2s is a deliberate compromise: fast enough that pressing play feels immediate,
     /// slow enough to be invisible in CPU use.
@@ -32,6 +33,9 @@ public final class SpotifyWatcher {
     }
 
     public func start() {
+        guard !isRunning else { return }
+        isRunning = true
+
         let center = NSWorkspace.shared.notificationCenter
 
         observers.append(center.addObserver(
@@ -63,6 +67,7 @@ public final class SpotifyWatcher {
     }
 
     public func stop() {
+        isRunning = false
         timer?.invalidate()
         timer = nil
         let center = NSWorkspace.shared.notificationCenter
