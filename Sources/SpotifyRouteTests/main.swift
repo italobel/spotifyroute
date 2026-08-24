@@ -5,6 +5,7 @@ failures += runVolumeFloorRuleTests()
 failures += runProtocolTests()
 failures += runSettingsTests()
 failures += runDestinationAudibilityTests()
+failures += runRouteControllerTests()
 
 if failures == 0 {
     print("ALL TESTS PASSED")

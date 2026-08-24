@@ -34,3 +34,14 @@ public enum SpotifyProcess {
         CA.uint32(object, kAudioProcessPropertyIsRunningOutput) == 1
     }
 }
+
+public protocol ProcessLocating {
+    func spotifyProcessObject() throws -> AudioObjectID
+}
+
+public struct LiveProcessLocating: ProcessLocating {
+    public init() {}
+    public func spotifyProcessObject() throws -> AudioObjectID {
+        try SpotifyProcess.processObject()
+    }
+}

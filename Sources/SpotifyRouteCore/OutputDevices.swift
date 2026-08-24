@@ -44,3 +44,14 @@ public enum OutputDevices {
         return CA.string(AudioObjectID(id), kAudioDevicePropertyDeviceUID)
     }
 }
+
+public protocol DeviceListing {
+    func allOutputDevices() throws -> [OutputDevice]
+    func currentDefaultUID() -> String?
+}
+
+public struct LiveDeviceListing: DeviceListing {
+    public init() {}
+    public func allOutputDevices() throws -> [OutputDevice] { try OutputDevices.all() }
+    public func currentDefaultUID() -> String? { OutputDevices.currentDefaultUID() }
+}

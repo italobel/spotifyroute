@@ -241,3 +241,13 @@ public final class AudioRouter {
         return list.count
     }
 }
+
+/// Abstracts the routing hardware so command semantics can be tested without it.
+public protocol Routing: AnyObject {
+    var isActive: Bool { get }
+    var activeDestinationUID: String? { get }
+    func enable(destination: OutputDevice, processObject: AudioObjectID) throws
+    func disable()
+}
+
+extension AudioRouter: Routing {}
