@@ -23,18 +23,28 @@ public final class DestinationAudibility: Audibility {
     private let readMuteFunc: (AudioObjectID) -> UInt32?
     /// Injectable mute write function; defaults to Core Audio helper.
     private let writeMuteFunc: (AudioObjectID, UInt32) -> Bool
+    /// Injectable volume read function; defaults to Core Audio helper.
+    private let readVolumeFunc: (AudioObjectID) -> Float?
+    /// Injectable volume write function; defaults to Core Audio helper.
+    private let writeVolumeFunc: (AudioObjectID, Float) -> Bool
 
     /// Initialize with default Core Audio helpers for production use.
     public init() {
         self.readMuteFunc = Self.readMute
         self.writeMuteFunc = Self.writeMute
+        self.readVolumeFunc = Self.readVolume
+        self.writeVolumeFunc = Self.writeVolume
     }
 
-    /// Initialize with injectable mute read/write for testing.
+    /// Initialize with injectable mute and volume read/write for testing.
     internal init(readMute: @escaping (AudioObjectID) -> UInt32?,
-                  writeMute: @escaping (AudioObjectID, UInt32) -> Bool) {
+                  writeMute: @escaping (AudioObjectID, UInt32) -> Bool,
+                  readVolume: @escaping (AudioObjectID) -> Float?,
+                  writeVolume: @escaping (AudioObjectID, Float) -> Bool) {
         self.readMuteFunc = readMute
         self.writeMuteFunc = writeMute
+        self.readVolumeFunc = readVolume
+        self.writeVolumeFunc = writeVolume
     }
 
     public func prepare(_ device: OutputDevice) {
@@ -45,8 +55,8 @@ public final class DestinationAudibility: Audibility {
         _ = writeMuteFunc(device.id, 0)
 
         // Raise the volume only if it is inaudible; never lower an audible one.
-        if let target = VolumeFloorRule.desiredVolume(current: Self.readVolume(device.id)) {
-            _ = Self.writeVolume(device.id, target)
+        if let target = VolumeFloorRule.desiredVolume(current: readVolumeFunc(device.id)) {
+            _ = writeVolumeFunc(device.id, target)
         }
     }
 
