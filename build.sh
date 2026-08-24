@@ -8,6 +8,22 @@ OUT="$ROOT/build"
 APP="$OUT/SpotifyRoute.app"
 BUNDLE_ID="com.italo.spotifyroute"
 
+AGENT_LABEL="com.italo.spotifyroute"
+AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
+# ~/Applications, not /Applications: user-writable, needs no admin password, and
+# still shows up in Spotlight and Launchpad. This is also the location the login
+# agent points at, so the installed copy survives `./build.sh`'s rm -rf of the
+# scratch build/ directory — see install_to_applications below.
+INSTALLED_APP="$HOME/Applications/SpotifyRoute.app"
+INSTALLED_CLI="$HOME/.local/bin/spotroute"
+
+if [ "${1:-}" = "--uninstall-login-agent" ]; then
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+  rm -f "$AGENT_PLIST"
+  echo "Login agent removed."
+  exit 0
+fi
+
 echo "==> Building ($CONFIG)"
 # Build only the two shipping products, not the whole package: SpotifyRouteTests uses
 # @testable import, which SwiftPM only supports when the imported module is compiled
@@ -50,4 +66,59 @@ Next:
 
 To install the CLI on your PATH:
   sudo cp "$OUT/spotroute" /usr/local/bin/spotroute
+
+To install permanently (survives the next build's rm -rf of build/SpotifyRoute.app):
+  ./build.sh --install
 EOF2
+
+# Copies the just-built bundle and CLI to a location that survives the next build's
+# rm -rf of $APP. `build/SpotifyRoute.app` above is scratch output: every invocation
+# of this script deletes and recreates it, so anything that pointed at it directly
+# (a Dock/Launchpad entry, a login agent) would end up pointing at whatever this
+# script produces next, built with different content and, after re-signing, a
+# different cdhash. Copying to a stable path outside build/ avoids that.
+install_to_applications() {
+  echo "==> Installing app to $INSTALLED_APP"
+  mkdir -p "$HOME/Applications"
+  rm -rf "$INSTALLED_APP"
+  cp -R "$APP" "$INSTALLED_APP"
+
+  echo "==> Installing CLI to $INSTALLED_CLI"
+  mkdir -p "$HOME/.local/bin"
+  cp "$OUT/spotroute" "$INSTALLED_CLI"
+}
+
+if [ "${1:-}" = "--install" ] || [ "${1:-}" = "--install-login-agent" ]; then
+  install_to_applications
+  cat <<EOF3
+
+Installed:
+  App: $INSTALLED_APP
+  CLI: $INSTALLED_CLI
+
+~/Applications needs no admin password and still appears in Spotlight and Launchpad.
+For a system-wide install instead (requires an admin password):
+  sudo cp -R "$APP" /Applications/SpotifyRoute.app
+
+This bundle was built locally, not downloaded, so it carries no quarantine
+attribute — macOS will not show a Gatekeeper prompt for it either way. That is
+the main reason this project ships as source rather than a signed download.
+
+Make sure $HOME/.local/bin is on your PATH. If you would rather not add it,
+install the CLI system-wide instead (requires an admin password):
+  sudo cp "$OUT/spotroute" /usr/local/bin/spotroute
+EOF3
+fi
+
+if [ "${1:-}" = "--install-login-agent" ]; then
+  echo "==> Installing login agent"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  sed "s|__APP_BINARY__|$INSTALLED_APP/Contents/MacOS/SpotifyRouteApp|g" \
+      "$ROOT/Resources/com.italo.spotifyroute.plist.template" > "$AGENT_PLIST"
+  launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
+  launchctl bootstrap "gui/$(id -u)" "$AGENT_PLIST"
+  echo "Login agent installed. SpotifyRoute will start automatically at login."
+  echo "It launches the binary inside $INSTALLED_APP, not the bundle itself, so the"
+  echo "process keeps its bundle identity and with it the audio-capture permission grant."
+  echo "Remove it with: ./build.sh --uninstall-login-agent"
+fi

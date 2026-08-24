@@ -73,6 +73,27 @@ if args.first == "--show-audibility" {
 
 // ---- normal launch: menu bar app ----
 
+// Single-instance guard (Task 13, Step 0). A menu-bar app the user can double-click
+// WILL get launched twice, and a login agent makes that likelier still — the agent
+// starts one copy at login and the user opens a second from Spotlight or Launchpad
+// without realizing one is already running. CommandServer.start() defensively
+// unlinks any existing socket before binding, so a second launch would silently
+// steal the control channel out from under the first: the first instance would be
+// orphaned still holding its process tap, its private aggregate device, and a
+// destination whose mute state it may have changed, with no menu or CLI able to
+// reach it, and its eventual teardown would unlink the socket the second instance
+// now owns. Checking here — before touching the socket or any Core Audio object —
+// means the loser exits cleanly instead of racing the winner for shared OS state.
+let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.italo.spotifyroute"
+let currentPID = ProcessInfo.processInfo.processIdentifier
+let runningPeers = NSRunningApplication
+    .runningApplications(withBundleIdentifier: bundleIdentifier)
+    .filter { $0.processIdentifier != currentPID }
+if let alreadyRunning = runningPeers.first {
+    alreadyRunning.activate()
+    exit(0)
+}
+
 /// Stops the control socket, disables the route, and stops the Spotify watcher on
 /// graceful termination. All three live here (not in `MenuBarController.quit()`)
 /// because this hook — `applicationWillTerminate` — is the one place reached by every
