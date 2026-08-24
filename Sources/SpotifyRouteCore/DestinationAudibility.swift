@@ -4,6 +4,13 @@ import CoreAudio
 public protocol Audibility: AnyObject {
     func prepare(_ device: OutputDevice)
     func restore(_ device: OutputDevice)
+
+    /// Drops any recorded prior mute state for `device` WITHOUT writing anything
+    /// back. For the one case where `restore(_:)` itself must not write: `device`
+    /// has, since being prepared, become the system default (see
+    /// `RouteController.restoreUnlessDefault`). Still needed even though nothing is
+    /// written, so the recorded state does not leak forever.
+    func forgetPriorState(for device: OutputDevice)
 }
 
 /// Makes a destination device actually audible, and puts back what it changed.
@@ -70,6 +77,13 @@ public final class DestinationAudibility: Audibility {
         if let prior = priorMute.removeValue(forKey: device.uid) {
             _ = writeMuteFunc(device.id, prior)
         }
+    }
+
+    /// Drops the recorded prior mute state for `device` without writing anything.
+    /// See the protocol doc comment for why this exists as a separate operation
+    /// from `restore(_:)` rather than a parameter on it.
+    public func forgetPriorState(for device: OutputDevice) {
+        priorMute.removeValue(forKey: device.uid)
     }
 
     // Devices expose volume and mute on either the main element or per channel;

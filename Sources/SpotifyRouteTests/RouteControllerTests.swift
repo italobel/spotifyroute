@@ -51,8 +51,10 @@ final class FakeProcesses: ProcessLocating {
 final class FakeAudibility: Audibility {
     var prepared: [String] = []
     var restored: [String] = []
+    var forgotten: [String] = []
     func prepare(_ d: OutputDevice) { prepared.append(d.uid) }
     func restore(_ d: OutputDevice) { restored.append(d.uid) }
+    func forgetPriorState(for d: OutputDevice) { forgotten.append(d.uid) }
 }
 
 private func makeController(
@@ -275,6 +277,44 @@ func runRouteControllerTests() -> Int {
                         "reapply() must not enable a route onto the new system default")
         try expectEqual(audibility.prepared.count, 0,
                         "reapply() must not unmute/raise the volume of the system default")
+    }
+
+    r.test("off does not mute the destination once it has become the system default") {
+        // The severe case: a deliberately-muted monitor is the destination, its
+        // former-default USB interface gets unplugged or sleeps, and macOS promotes
+        // the monitor to system default WHILE the route is still active. `off` must
+        // not write the destination's recorded prior mute state back in that case —
+        // doing so would silence the whole Mac's output, not just this app's route.
+        // The bookkeeping must still be dropped so it doesn't leak forever.
+        let devices = FakeDevices()
+        let (c, _, router, _, _, audibility) = makeController(devices: devices)
+        _ = c.handle(.use("SPEAKERS"))
+        _ = c.handle(.on)
+        try expectEqual(audibility.prepared, ["SPEAKERS"])
+
+        devices.defaultUID = "SPEAKERS"  // the system default has since changed
+        guard case .ok = c.handle(.off) else { throw TestFailure("expected ok") }
+        try expect(router.disableCount >= 1, "router is still torn down")
+        try expectEqual(audibility.restored.count, 0,
+                        "must NOT write mute to what is now the system default")
+        try expectEqual(audibility.forgotten, ["SPEAKERS"],
+                        "prior-state bookkeeping is still dropped so it doesn't leak")
+    }
+
+    r.test("shutdown does not mute the destination once it has become the system default") {
+        // Same guard, reached through shutdown() — the path taken on quit/logout,
+        // not just an explicit `off`.
+        let devices = FakeDevices()
+        let (c, _, _, _, _, audibility) = makeController(devices: devices)
+        _ = c.handle(.use("SPEAKERS"))
+        _ = c.handle(.on)
+
+        devices.defaultUID = "SPEAKERS"
+        c.shutdown()
+        try expectEqual(audibility.restored.count, 0,
+                        "must NOT write mute to what is now the system default")
+        try expectEqual(audibility.forgotten, ["SPEAKERS"],
+                        "prior-state bookkeeping is still dropped so it doesn't leak")
     }
 
     return r.summarise()

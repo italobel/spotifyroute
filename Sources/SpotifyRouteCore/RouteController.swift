@@ -86,7 +86,7 @@ public final class RouteController {
             if settings.routeEnabled, router.isActive {
                 if let previousUID, previousUID != uid,
                    let previousDevice = all.first(where: { $0.uid == previousUID }) {
-                    audibility.restore(previousDevice)
+                    restoreUnlessDefault(previousDevice)
                 }
                 return handleOn()
             }
@@ -139,7 +139,7 @@ public final class RouteController {
             try router.enable(destination: device, processObject: processObject)
         } catch {
             // Do not persist an intent that could not be applied.
-            audibility.restore(device)
+            restoreUnlessDefault(device)
             return .error("\(error)")
         }
 
@@ -152,7 +152,7 @@ public final class RouteController {
         router.disable()
         if let uid = settings.destinationUID,
            let device = try? devices.allOutputDevices().first(where: { $0.uid == uid }) {
-            audibility.restore(device)
+            restoreUnlessDefault(device)
         }
         settings.routeEnabled = false
         try? store.save(settings)
@@ -205,7 +205,33 @@ public final class RouteController {
         router.disable()
         if let uid = settings.destinationUID,
            let device = try? devices.allOutputDevices().first(where: { $0.uid == uid }) {
-            audibility.restore(device)
+            restoreUnlessDefault(device)
         }
+    }
+
+    /// Restores `device`'s recorded mute state — UNLESS `device` has, since being
+    /// prepared, become the system default (e.g. its former default was unplugged
+    /// or slept, and macOS promoted this device). Every `restore(_:)` call in this
+    /// file goes through here rather than calling `audibility.restore` directly,
+    /// so this one check covers `handleUse`'s switch-while-active path, `handleOn`'s
+    /// failed-enable rollback, `handleOff`, and `shutdown()` alike.
+    ///
+    /// Deliberately does NOT write in that case, even though leaving the device
+    /// unmuted is itself a kind of modification: writing mute (its recorded prior
+    /// value, or the unmute `prepare()` already applied) to what is now the system
+    /// default risks silencing every sound on the Mac — calls, notifications,
+    /// everything — not just this app's route. That is a far more severe and
+    /// confusing failure than leaving one device unmuted, which is recoverable in
+    /// one click and immediately audible; a silently muted system default looks
+    /// like a hardware fault, not an app bug. So the write is skipped — but the
+    /// recorded prior state is still discarded via `forgetPriorState`, so it does
+    /// not leak forever (the same leak the switch-while-active fix closed for the
+    /// ordinary case).
+    private func restoreUnlessDefault(_ device: OutputDevice) {
+        guard device.uid != devices.currentDefaultUID() else {
+            audibility.forgetPriorState(for: device)
+            return
+        }
+        audibility.restore(device)
     }
 }
