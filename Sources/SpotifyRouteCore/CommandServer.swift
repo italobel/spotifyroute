@@ -22,7 +22,23 @@ public final class CommandServer {
     /// giving up. A few seconds is generous for any legitimate Core Audio call while
     /// still short enough that a wedged main thread does not take the whole control
     /// channel down with it.
-    private let handlerTimeout: TimeInterval = 3.0
+    private let defaultHandlerTimeout: TimeInterval = 3.0
+
+    /// `selftest` is the one command that is unconditionally longer than
+    /// `handlerTimeout`: SelfTest.run writes a short WAV, polls for the test player to
+    /// hold an output stream (up to 40 * 0.25s = 10s in the worst case), enables the
+    /// router, and then sleeps for its measurement window (3s) before returning. That
+    /// is comfortably north of 3s even in the common case, so `.selftest` gets its own,
+    /// much longer bound; every other command keeps the tight 3s bound that protects
+    /// the accept loop from a genuinely wedged main thread.
+    private let selfTestHandlerTimeout: TimeInterval = 15.0
+
+    private func handlerTimeout(for command: Command) -> TimeInterval {
+        switch command {
+        case .selftest: return selfTestHandlerTimeout
+        default:        return defaultHandlerTimeout
+        }
+    }
 
     public init(socketURL: URL, handler: @escaping (Command) -> Reply) {
         self.socketURL = socketURL
@@ -165,9 +181,9 @@ public final class CommandServer {
     }
 
     /// Runs `handler` on the main thread (Core Audio work must be serialised there)
-    /// and waits for it, bounded by `handlerTimeout`. `serve()` always runs on the
-    /// dedicated accept thread — never the main thread — so there is no same-thread
-    /// case to special-case here.
+    /// and waits for it, bounded by `handlerTimeout(for:)`. `serve()` always runs on
+    /// the dedicated accept thread — never the main thread — so there is no
+    /// same-thread case to special-case here.
     ///
     /// The wait is bounded rather than an unconditional `DispatchQueue.main.sync`
     /// specifically because a stalled main thread (a slow Core Audio call, a modal
@@ -181,7 +197,7 @@ public final class CommandServer {
             result = self.handler(command)
             semaphore.signal()
         }
-        guard semaphore.wait(timeout: .now() + handlerTimeout) == .success else {
+        guard semaphore.wait(timeout: .now() + handlerTimeout(for: command)) == .success else {
             return .error("app busy — timed out waiting for a reply")
         }
         return result

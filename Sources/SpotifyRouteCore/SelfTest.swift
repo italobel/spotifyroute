@@ -17,7 +17,16 @@ public enum SelfTest {
     public static func run(destination: OutputDevice, seconds: Double = 3) throws -> Outcome {
         let toneURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("spotifyroute-selftest-\(getpid()).wav")
-        try writeSineWAV(to: toneURL, seconds: seconds + 4, amplitude: 0.25)
+        // The tone only has to outlast the measurement window plus the time it takes
+        // to get there: launching afplay, the readiness poll below (typically one or
+        // two 0.25s ticks), and enabling the router. `player.terminate()` cuts the
+        // tone off as soon as this function returns, so generating more than that is
+        // pure wasted CPU/IO on the caller's thread (this whole function runs
+        // synchronously on whichever thread calls it, which in the running app is the
+        // main thread) — 2s of startup margin is generous for the common case without
+        // padding out a file that is going to be killed early anyway.
+        let startupMargin = 2.0
+        try writeSineWAV(to: toneURL, seconds: seconds + startupMargin, amplitude: 0.25)
         defer { try? FileManager.default.removeItem(at: toneURL) }
 
         let player = Process()

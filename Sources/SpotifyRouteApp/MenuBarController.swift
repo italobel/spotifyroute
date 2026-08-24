@@ -54,6 +54,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         // Destination picker.
         let destinationItem = NSMenuItem(title: "Send Spotify To", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
+        // NSMenu.autoenablesItems defaults to true: AppKit runs a validation pass over
+        // every item just before display and recomputes isEnabled for any item that has
+        // a target/action, discarding the manual `item.isEnabled = false` below (the
+        // item validates back to enabled because chooseDestination(_:) exists on self).
+        // Without this, the system-default row would be clickable and the user would
+        // hit the "refused, it's already the default" dead end this menu exists to
+        // avoid presenting.
+        submenu.autoenablesItems = false
         let defaultUID = devices.currentDefaultUID()
         let chosenUID = chosenDestinationUID
         if let all = try? devices.allOutputDevices() {
@@ -124,8 +132,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         alert.runModal()
     }
 
+    /// Teardown (route disable, audibility restore, watcher stop, socket close) all
+    /// happens in `applicationWillTerminate` in main.swift, which is reached whichever
+    /// way the app quits gracefully; this just asks NSApplication to go through that
+    /// sequence rather than duplicating it here.
     @objc private func quit() {
-        controller.shutdown()
         NSApp.terminate(nil)
     }
 

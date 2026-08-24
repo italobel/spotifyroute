@@ -73,13 +73,21 @@ if args.first == "--show-audibility" {
 
 // ---- normal launch: menu bar app ----
 
-/// Stops the control socket on graceful termination so the socket file does not
-/// outlive the process. `MenuBarController.quit()` tears down audio state but has no
-/// reference to `server` (it is constructed before `server` exists); routing the stop
-/// through `applicationWillTerminate` covers every graceful-quit path — the menu item,
-/// Dock/Activity Monitor "Quit" — without changing MenuBarController's reviewed source.
-/// A `kill -9`/SIGKILL still bypasses this, same as any Cocoa app; CommandServer.start()
-/// already unlinks a stale socket left behind by that case.
+/// Stops the control socket, disables the route, and stops the Spotify watcher on
+/// graceful termination. All three live here (not in `MenuBarController.quit()`)
+/// because this hook — `applicationWillTerminate` — is the one place reached by every
+/// graceful-quit path: the menu's Quit item (`NSApp.terminate(nil)`), and the standard
+/// `quit` Apple Event (System Events, logout). An accessory app has no Dock tile, so
+/// there is no separate Dock-quit path to worry about. SIGTERM (plain `kill`/`pkill`)
+/// and SIGKILL both bypass this entirely, same as any Cocoa app that does not install a
+/// signal handler; `CommandServer.start()` already unlinks a stale socket left behind
+/// by either case, and a stale route re-applies harmlessly on next launch since
+/// `shutdown()` deliberately leaves `routeEnabled` untouched.
+///
+/// `watcher.stop()` runs first so a poll tick landing mid-teardown cannot call
+/// `reapply()` and re-enable the very route `shutdown()` is about to tear down —
+/// `reapply()` only guards on `routeEnabled && !router.isActive`, which a tick between
+/// `shutdown()` and process exit would satisfy.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let onTerminate: () -> Void
     init(onTerminate: @escaping () -> Void) { self.onTerminate = onTerminate }
@@ -104,8 +112,20 @@ let server = CommandServer(socketURL: CommandServer.defaultSocketURL) { command 
     menuBar.refreshGlyph()
     return reply
 }
-let appDelegate = AppDelegate(onTerminate: { server.stop() })
+
+let watcher = SpotifyWatcher(
+    onAppeared: { controller.reapply(); menuBar.refreshGlyph() },
+    onVanished: { menuBar.refreshGlyph() },
+    onPlaybackStarted: { controller.reapply(); menuBar.refreshGlyph() }
+)
+
+let appDelegate = AppDelegate(onTerminate: {
+    watcher.stop()
+    controller.shutdown()
+    server.stop()
+})
 app.delegate = appDelegate
+
 do {
     try server.start()
 } catch {
@@ -117,11 +137,6 @@ do {
     alert.runModal()
 }
 
-let watcher = SpotifyWatcher(
-    onAppeared: { controller.reapply(); menuBar.refreshGlyph() },
-    onVanished: { menuBar.refreshGlyph() },
-    onPlaybackStarted: { controller.reapply(); menuBar.refreshGlyph() }
-)
 watcher.start()
 
 // Apply a route persisted from the last session.
