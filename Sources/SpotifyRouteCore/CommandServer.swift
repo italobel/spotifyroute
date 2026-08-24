@@ -8,9 +8,21 @@ import Foundation
 public final class CommandServer {
     private let socketURL: URL
     private let handler: (Command) -> Reply
+
+    /// Guards `listenFD` and `stopping`, which `stop()` writes from whatever thread the
+    /// caller uses and the accept loop reads/writes from its own dedicated thread —
+    /// the same pattern `AudioRouter.Metrics` uses for its cross-thread counters.
+    private let lock = NSLock()
     private var listenFD: Int32 = -1
-    private var thread: Thread?
     private var stopping = false
+
+    private var thread: Thread?
+
+    /// How long the accept loop waits for the main thread to run a handler before
+    /// giving up. A few seconds is generous for any legitimate Core Audio call while
+    /// still short enough that a wedged main thread does not take the whole control
+    /// channel down with it.
+    private let handlerTimeout: TimeInterval = 3.0
 
     public init(socketURL: URL, handler: @escaping (Command) -> Reply) {
         self.socketURL = socketURL
@@ -29,8 +41,8 @@ public final class CommandServer {
         // A stale socket file from a crash would make bind() fail with EADDRINUSE.
         unlink(socketURL.path)
 
-        listenFD = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard listenFD >= 0 else {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
             throw RouteError.coreAudio("socket()", OSStatus(errno))
         }
 
@@ -38,6 +50,7 @@ public final class CommandServer {
         addr.sun_family = sa_family_t(AF_UNIX)
         let path = socketURL.path
         guard path.utf8.count < MemoryLayout.size(ofValue: addr.sun_path) else {
+            close(fd)
             throw RouteError.selfTestFailed("socket path too long: \(path)")
         }
         withUnsafeMutableBytes(of: &addr.sun_path) { raw in
@@ -46,16 +59,29 @@ public final class CommandServer {
 
         let size = socklen_t(MemoryLayout<sockaddr_un>.size)
         let bound = withUnsafePointer(to: &addr) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listenFD, $0, size) }
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
         }
         guard bound == 0 else {
-            close(listenFD)
+            close(fd)
             throw RouteError.selfTestFailed("bind() failed: errno \(errno)")
         }
-        guard listen(listenFD, 8) == 0 else {
-            close(listenFD)
+        guard listen(fd, 8) == 0 else {
+            close(fd)
             throw RouteError.selfTestFailed("listen() failed: errno \(errno)")
         }
+
+        // Non-blocking so the accept loop can poll with a timeout instead of blocking
+        // inside accept(). That means stop() never has to interrupt a blocked syscall
+        // (no risk of racing a closed-and-reused descriptor into an unrelated accept),
+        // and a run of accept() failures gets the poll timeout as backoff instead of
+        // spinning a thread at full CPU.
+        let flags = fcntl(fd, F_GETFL, 0)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        lock.lock()
+        listenFD = fd
+        stopping = false
+        lock.unlock()
 
         let t = Thread { [weak self] in self?.acceptLoop() }
         t.name = "SpotifyRoute.CommandServer"
@@ -63,18 +89,49 @@ public final class CommandServer {
         thread = t
     }
 
+    /// Idempotent: safe to call more than once, and safe to call after a `start()`
+    /// that failed partway through (in which case `listenFD` is already -1 and this
+    /// is a no-op beyond the redundant unlink).
     public func stop() {
+        lock.lock()
+        if stopping {
+            lock.unlock()
+            return
+        }
         stopping = true
-        if listenFD >= 0 { close(listenFD); listenFD = -1 }
+        let fd = listenFD
+        listenFD = -1
+        lock.unlock()
+
+        if fd >= 0 { close(fd) }
         unlink(socketURL.path)
     }
 
     private func acceptLoop() {
-        while !stopping {
-            let clientFD = accept(listenFD, nil, nil)
+        while true {
+            lock.lock()
+            let shouldStop = stopping
+            let fd = listenFD
+            lock.unlock()
+            if shouldStop || fd < 0 { return }
+
+            // A human-driven control socket, not a hot path — a few hundred ms of
+            // poll latency before noticing a stop request is unnoticeable, and it
+            // gives every no-connection iteration a built-in backoff.
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, 300)
+            guard ready > 0, pfd.revents & Int16(POLLIN) != 0 else {
+                continue // timeout, EINTR, or the fd went away under us — recheck stopping
+            }
+
+            let clientFD = accept(fd, nil, nil)
             if clientFD < 0 {
-                if stopping { return }
-                continue
+                let err = errno
+                if err == EAGAIN || err == EWOULDBLOCK || err == EINTR {
+                    continue
+                }
+                fputs("CommandServer: accept() failed: errno \(err)\n", stderr)
+                continue // the poll timeout above already provides backoff
             }
             serve(clientFD)
             close(clientFD)
@@ -91,15 +148,7 @@ public final class CommandServer {
         let reply: Reply
         switch parseCommand(line) {
         case .success(let command):
-            // Core Audio work is serialised onto the main thread; the app's run loop
-            // is never blocked for long, so this cannot deadlock in practice.
-            var result: Reply = .error("no reply")
-            if Thread.isMainThread {
-                result = handler(command)
-            } else {
-                DispatchQueue.main.sync { result = handler(command) }
-            }
-            reply = result
+            reply = runOnMainThread(command)
         case .failure(let error):
             switch error {
             case .empty:
@@ -113,5 +162,28 @@ public final class CommandServer {
 
         let payload = encodeReply(reply) + "\n"
         _ = payload.withCString { write(fd, $0, strlen($0)) }
+    }
+
+    /// Runs `handler` on the main thread (Core Audio work must be serialised there)
+    /// and waits for it, bounded by `handlerTimeout`. `serve()` always runs on the
+    /// dedicated accept thread — never the main thread — so there is no same-thread
+    /// case to special-case here.
+    ///
+    /// The wait is bounded rather than an unconditional `DispatchQueue.main.sync`
+    /// specifically because a stalled main thread (a slow Core Audio call, a modal
+    /// alert, anything) must not be able to wedge the accept loop: `serve()` only
+    /// accepts the next connection after this returns, so an unbounded wait here
+    /// would queue every subsequent Stream Deck press and CLI invocation behind it.
+    private func runOnMainThread(_ command: Command) -> Reply {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Reply = .error("no reply")
+        DispatchQueue.main.async {
+            result = self.handler(command)
+            semaphore.signal()
+        }
+        guard semaphore.wait(timeout: .now() + handlerTimeout) == .success else {
+            return .error("app busy — timed out waiting for a reply")
+        }
+        return result
     }
 }
