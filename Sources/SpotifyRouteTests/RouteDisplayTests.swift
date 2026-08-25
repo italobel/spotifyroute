@@ -153,5 +153,28 @@ func runRouteDisplayTests() -> Int {
         try expect(!d.toggleEnabled, "the destination does not exist, so turning on is impossible")
     }
 
+    r.test("destination equal to the system default, route off: cannot turn on, and says why") {
+        let d = RouteDisplayBuilder.build(status: .off, destinationUID: "IFACE",
+                                         devices: devices(), systemDefaultUID: "IFACE",
+                                         spotify: .paused, activity: .idle)
+        try expectEqual(d.toggleTitle, "Turn On")
+        try expect(!d.toggleEnabled,
+                   "RouteController.handleOn() always refuses a destination that is the system default")
+        try expect(d.problem?.contains("system default") == true,
+                   "the problem row must explain the refusal, not just leave the toggle mysteriously disabled")
+    }
+
+    r.test("destination equal to the system default, route active: can still turn off") {
+        let d = RouteDisplayBuilder.build(status: .active(destinationUID: "IFACE"),
+                                         destinationUID: "IFACE", devices: devices(),
+                                         systemDefaultUID: "IFACE", spotify: .playing,
+                                         activity: .idle)
+        try expectEqual(d.toggleTitle, "Turn Off")
+        try expect(d.toggleEnabled,
+                   "an already-on route must always be closeable, even once its destination has become the default")
+        try expect(d.problem?.contains("system default") == true,
+                   "the standing condition is still worth explaining even though it does not block turning off")
+    }
+
     return r.summarise()
 }

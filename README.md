@@ -203,6 +203,14 @@ until the dialog is answered. This isn't a bug to be polished away — the Core 
 that can trigger the dialog runs on the main thread and blocks it, so the window cannot
 render anything else, including a more informative message, until that call returns.
 
+**Known limitation:** the window refreshes itself whenever it becomes key — opening it,
+clicking the Dock icon, or clicking into it while it was already visible in the
+background — so it is always current at the moment you look at it. But while it is
+already open and sitting in the background, it does not notice a device being
+connected or disconnected, or the system default changing, on its own: there is no
+listener for those events yet. Click into the window (or close and reopen it) to pick
+up the change.
+
 ## Permission on first launch
 
 The first time SpotifyRoute tries to capture Spotify's audio, macOS will prompt you
@@ -247,8 +255,9 @@ spotroute — control SpotifyRoute
 ```
 
 `selftest` blocks for up to ~13 seconds while it plays and measures a test tone —
-during that window the menu bar freezes and any other command (including a Stream
-Deck press) queues behind it until it finishes.
+during that window the menu bar freezes, the app's own window freezes too (for the
+same reason and the same duration — both run on the main thread), and any other
+command (including a Stream Deck press) queues behind it until it finishes.
 
 ### App binary diagnostic flags
 

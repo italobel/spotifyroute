@@ -29,6 +29,17 @@ public struct MainWindowView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            // Distinct from `problem` above: this is the text of the last command's
+            // failure (a missing permission, a refused route), not a standing
+            // condition of the world. Red, not orange, so the two are never confused
+            // at a glance.
+            if let failure = state.commandFailure {
+                Text(failure)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
             Divider()
 
             Text("Send Spotify to")
@@ -63,6 +74,18 @@ private struct DeviceRowView: View {
 
     private var isEnabled: Bool { row.isSelectable && !isBusy }
 
+    /// Keyed on the same `isEnabled` the row's `.disabled`/`.opacity` above use, not
+    /// on `row.isSelectable` alone — otherwise a row disabled only because a command
+    /// is in flight would explain itself as "your system default" while hovering
+    /// over a perfectly selectable device.
+    private var tooltip: String {
+        if isEnabled { return "Send Spotify to \(row.name)" }
+        if !row.isSelectable {
+            return "\(row.name) is your system default — routing it to itself only adds latency"
+        }
+        return "A command is already in progress"
+    }
+
     var body: some View {
         Button(action: choose) {
             HStack(spacing: 6) {
@@ -81,8 +104,6 @@ private struct DeviceRowView: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1.0 : 0.45)
-        .help(row.isSelectable
-              ? "Send Spotify to \(row.name)"
-              : "\(row.name) is your system default — routing it to itself only adds latency")
+        .help(tooltip)
     }
 }

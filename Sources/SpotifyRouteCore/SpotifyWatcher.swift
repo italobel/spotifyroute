@@ -71,9 +71,16 @@ public final class SpotifyWatcher {
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey]
                     as? NSRunningApplication,
                   app.bundleIdentifier == SpotifyProcess.bundleID else { return }
+            // Gated on the previous value, exactly like poll()'s absent-Spotify path:
+            // otherwise every quit fires a false->false "change" and refreshUI()
+            // redundantly re-reads devices and Spotify's process object for a level
+            // that never actually changed.
+            let wasProducing = self?.wasProducingOutput ?? false
             self?.wasProducingOutput = false
             self?.onVanished()
-            self?.onPlaybackLevel(false)
+            if wasProducing {
+                self?.onPlaybackLevel(false)
+            }
         })
 
         let t = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in

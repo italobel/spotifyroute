@@ -77,6 +77,16 @@ public enum RouteDisplayBuilder {
             problem = reason
         } else if let uid = destinationUID, destinationName == nil {
             problem = "The chosen destination (\(uid)) is not currently available."
+        } else if let uid = destinationUID, uid == systemDefaultUID {
+            // Mirrors RouteController.handleOn()'s own refusal: routing a device to
+            // itself only adds latency. This can happen live, not just via manual
+            // misconfiguration — the destination can be some other device while a USB
+            // interface is system default, and then macOS promotes the destination to
+            // default the moment that interface is unplugged or sleeps. Without this,
+            // `canToggle` below would stay true and "Turn On" would sit enabled for a
+            // command `RouteController` always refuses.
+            problem = "\(destinationName ?? uid) is already the system default — "
+                     + "routing it to itself only adds latency."
         }
 
         let spotifyLine: String

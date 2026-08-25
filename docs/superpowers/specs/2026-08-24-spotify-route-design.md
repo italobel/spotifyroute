@@ -135,7 +135,9 @@ pointing at the enum rather than the real cause.
 Two binaries, so the Stream Deck never touches Core Audio.
 
 ```
-SpotifyRoute.app            LSUIElement menu-bar app, ad-hoc signed
+SpotifyRoute.app            regular app with a window and Dock icon, plus a menu bar
+                             item, ad-hoc signed (see 2026-08-25-window-ui-design.md —
+                             it was LSUIElement/menu-bar-only when this doc was written)
 ├── AudioRouter             tap + aggregate + IOProc lifecycle
 ├── OutputDevices           enumerate output devices; resolve a persisted UID on demand
 ├── DestinationAudibility   unmute + volume floor for the chosen destination

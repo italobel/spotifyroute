@@ -101,6 +101,13 @@ every 2 seconds indefinitely, which is wasteful and was corrected before
 implementation.) This is additive; the existing edge callback and its semantics are
 untouched.
 
+That change-only trade is cheaper, but it is specifically a trade about *playback*
+level, and it buys the window nothing for device-list or default-device changes —
+there was never a poll for those to begin with. The window only re-reads devices and
+the default when something else already triggers a refresh (a route/playback event,
+or now becoming key); it does not notice a device connect/disconnect or a default
+change on its own. See "Known limitation" in the README.
+
 ## Window content
 
 One column, in this order:

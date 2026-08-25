@@ -210,7 +210,11 @@ let windowController = WindowController(
         // before the Core Audio call blocks the main thread. See the spec's
         // "pending-permission wedge" section: nothing can render during the block.
         DispatchQueue.main.async {
-            _ = controller.handle(.toggle)
+            let reply = controller.handle(.toggle)
+            // Surfaces a failure (missing permission, a refused route) inline in the
+            // window instead of discarding it — the menu bar shows the same failure
+            // via an NSAlert; the spec promises the window shows it too, inline.
+            appState.recordReply(reply)
             appState.endWork()
             refreshUI()
         }
@@ -218,11 +222,17 @@ let windowController = WindowController(
     onChooseDevice: { uid in
         appState.beginWork()
         DispatchQueue.main.async {
-            _ = controller.handle(.use(uid))
+            let reply = controller.handle(.use(uid))
+            appState.recordReply(reply)
             appState.endWork()
             refreshUI()
         }
-    }
+    },
+    // Every other refresh site is a route or playback event; there is no listener
+    // for device-list or default-device changes. Refreshing here means opening or
+    // clicking into the window always shows current reality, closing the cheapest
+    // and highest-value part of that gap without adding a new Core Audio mechanism.
+    onBecomeKey: refreshUI
 )
 
 let server = CommandServer(socketURL: CommandServer.defaultSocketURL) { command in
@@ -256,8 +266,11 @@ let appDelegate = AppDelegate(
         // agent (./build.sh --install-login-agent) is installed, this same launch path
         // runs unattended at login and will steal focus from whatever the user is
         // doing at that moment. Deliberately not special-cased — see the design spec.
-        windowController.showWindow()
+        // refreshUI() first, showWindow() second: the guarantee that the window never
+        // shows AppState's empty initial snapshot should hold on its own, not depend
+        // on the final `refreshUI()` call further down this file having already run.
         refreshUI()
+        windowController.showWindow()
     },
     onReopen: { windowController.showWindow(); refreshUI() }
 )

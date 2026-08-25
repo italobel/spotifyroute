@@ -34,6 +34,20 @@ public final class AppState: ObservableObject {
 
     @Published public private(set) var display: RouteDisplay
 
+    /// The text of the most recently failed command, or nil if the last command (if
+    /// any) succeeded. This is transient state about what SpotifyRoute just tried to
+    /// do, not derived state about the world — unlike `Snapshot`, it cannot be
+    /// recomputed from current reality, so it is tracked separately and survives
+    /// `apply(_:)` calls that carry no news about it either way (e.g. a snapshot
+    /// pushed by an unrelated Spotify-launch or device-change event). It is cleared
+    /// only by a subsequent command's own outcome: success clears it, another
+    /// failure replaces it. Deliberately distinct from `RouteDisplay.problem`, which
+    /// describes a standing condition of the world (missing destination,
+    /// misconfiguration) rather than the outcome of one past action — conflating the
+    /// two would make a shown message ambiguous between "this is wrong right now"
+    /// and "the last thing you clicked didn't work."
+    @Published public private(set) var commandFailure: String?
+
     /// The most recent snapshot, kept so `endWork()` can rebuild from real state
     /// rather than leaving a stale "Working…" on screen.
     private var latest: Snapshot
@@ -54,6 +68,20 @@ public final class AppState: ObservableObject {
     public func apply(_ snapshot: Snapshot) {
         latest = snapshot
         rebuild()
+    }
+
+    /// Records the outcome of a command the window itself issued (Turn On/Off, or
+    /// choosing a device), so a failure can be shown inline instead of silently
+    /// dropped. A success clears any failure left over from an earlier attempt; it
+    /// does not touch `display` — call `apply(_:)` separately to refresh that from
+    /// current reality, exactly as before this existed.
+    public func recordReply(_ reply: Reply) {
+        switch reply {
+        case .ok:
+            commandFailure = nil
+        case .error(let message):
+            commandFailure = message
+        }
     }
 
     public func beginWork() {

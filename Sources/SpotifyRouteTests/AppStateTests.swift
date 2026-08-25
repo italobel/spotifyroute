@@ -71,5 +71,28 @@ func runAppStateTests() -> Int {
                         "second endWork call without new beginWork leaves real state intact")
     }
 
+    r.test("a failed command's reply text becomes visible") {
+        let s = AppState()
+        try expectNil(s.commandFailure, "nothing has failed yet")
+        s.recordReply(.error("permission denied"))
+        try expectEqual(s.commandFailure, "permission denied")
+    }
+
+    r.test("a subsequent successful command clears a prior failure") {
+        let s = AppState()
+        s.recordReply(.error("permission denied"))
+        try expectEqual(s.commandFailure, "permission denied")
+        s.recordReply(.ok("on -> Built-in Speakers"))
+        try expectNil(s.commandFailure, "success clears the old failure")
+    }
+
+    r.test("an unrelated snapshot does not clear a failure — only another command's own outcome does") {
+        let s = AppState()
+        s.recordReply(.error("permission denied"))
+        s.apply(snapshot(.off, "SPEAKERS"))
+        try expectEqual(s.commandFailure, "permission denied",
+                        "a snapshot pushed by e.g. a device-change refresh carries no news about the last command")
+    }
+
     return r.summarise()
 }
