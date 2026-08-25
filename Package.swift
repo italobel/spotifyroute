@@ -14,11 +14,13 @@ let package = Package(
     platforms: [.macOS("14.2")],
     targets: [
         .target(name: "SpotifyRouteCore", swiftSettings: swift5),
+        .target(name: "SpotifyRouteUI",
+                dependencies: ["SpotifyRouteCore"], swiftSettings: swift5),
         .executableTarget(name: "SpotifyRouteApp",
-                          dependencies: ["SpotifyRouteCore"], swiftSettings: swift5),
+                          dependencies: ["SpotifyRouteCore", "SpotifyRouteUI"], swiftSettings: swift5),
         .executableTarget(name: "spotroute",
                           dependencies: ["SpotifyRouteCore"], swiftSettings: swift5),
         .executableTarget(name: "SpotifyRouteTests",
-                          dependencies: ["SpotifyRouteCore"], swiftSettings: swift5),
+                          dependencies: ["SpotifyRouteCore", "SpotifyRouteUI"], swiftSettings: swift5),
     ]
 )

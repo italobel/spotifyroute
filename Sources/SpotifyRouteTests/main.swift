@@ -7,6 +7,7 @@ failures += runSettingsTests()
 failures += runDestinationAudibilityTests()
 failures += runRouteControllerTests()
 failures += runCommandServerTests()
+failures += runRouteDisplayTests()
 
 if failures == 0 {
     print("ALL TESTS PASSED")
