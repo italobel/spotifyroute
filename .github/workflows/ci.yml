@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    # macos-15's default toolchain is Xcode 16.4, bundling the macOS 15 SDK — comfortably
+    # above this project's .macOS("14.2") deployment floor — and a Swift 6.x compiler,
+    # which Package.swift requires (swift-tools-version:6.0; the app itself still builds
+    # in Swift 5 language mode via .swiftLanguageMode(.v5), a separate setting from the
+    # tools-version the package manifest needs to be parsed at all). macos-14 is
+    # deprecated on GitHub-hosted runners, so macos-15 is the oldest current image that
+    # still satisfies both requirements.
+    runs-on: macos-15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (debug)
+        run: swift build
+
+      # SpotifyRouteTests is a plain executable target driven by a small hand-rolled
+      # harness (Sources/SpotifyRouteTests/main.swift), not an XCTest bundle — there are
+      # no XCTest tests in this project and no XCTest in the toolchain it targets, so
+      # `swift test` is not applicable here. This target exits non-zero on any test
+      # failure, which is what makes it usable as a CI gate.
+      - name: Run tests
+        run: swift run SpotifyRouteTests
+
+      # Deliberately included even though the debug build and tests above already passed:
+      # this project once broke specifically at this step (a release build pulled in the
+      # @testable-importing test target and failed to compile) and nothing else in this
+      # workflow would catch a regression of that. build.sh with no arguments only builds
+      # and ad-hoc signs (codesign --sign -) into ./build — it is never passed --install
+      # or --install-login-agent, so it never touches anything outside the checkout.
+      - name: Run build.sh (release build + assembly + ad-hoc signing)
+        run: ./build.sh
