@@ -117,5 +117,28 @@ func runAppStateTests() -> Int {
                         "status did not actually change, so the failure is still live")
     }
 
+    r.test("refreshing before recording the reply keeps the failure visible even through the command's OWN status transition") {
+        // Pins the fix in main.swift's onToggle/onChooseDevice: the window now calls
+        // refreshUI() (== apply(currentSnapshot())) BEFORE recordReply(), not after.
+        // This is the real failure shape the old order got wrong — not a hand-built
+        // "unrelated" snapshot, but the exact one a failing `use` while active
+        // produces for real: AudioRouter.enable() tears the active route down before
+        // attempting the new destination, so router.isActive genuinely drops even
+        // after RouteController stops persisting the failed switch's UID (round 4's
+        // fix). That is a genuine .active -> .armed RouteStatus transition — the kind
+        // apply()'s stale-failure clearing is supposed to act on — caused by the very
+        // command whose failure is being recorded. Calling apply() first means that
+        // transition is checked against whatever commandFailure an EARLIER command
+        // left behind (there is none here), and recordReply() — this command's own
+        // outcome — is applied last, so nothing after it can wipe it.
+        let s = AppState()
+        s.apply(snapshot(.active(destinationUID: "SPEAKERS"), "SPEAKERS", .playing))
+        // The command's own refresh, reflecting the real consequence of its failure.
+        s.apply(snapshot(.armed(destinationUID: "SPEAKERS"), "SPEAKERS", .playing))
+        s.recordReply(.error("could not switch destination"))
+        try expectEqual(s.commandFailure, "could not switch destination",
+                        "recording the reply after the refresh means it always has the final word")
+    }
+
     return r.summarise()
 }

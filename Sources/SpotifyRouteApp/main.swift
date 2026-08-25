@@ -211,21 +211,38 @@ let windowController = WindowController(
         // "pending-permission wedge" section: nothing can render during the block.
         DispatchQueue.main.async {
             let reply = controller.handle(.toggle)
-            // Surfaces a failure (missing permission, a refused route) inline in the
-            // window instead of discarding it — the menu bar shows the same failure
-            // via an NSAlert; the spec promises the window shows it too, inline.
-            appState.recordReply(reply)
-            appState.endWork()
+            // Order matters here, and it used to be the other way around (refresh
+            // LAST). AppState.apply() clears a stale commandFailure when the fresh
+            // snapshot's RouteStatus differs from the one already on file — which is
+            // exactly what THIS command's own status change looks like too (e.g. a
+            // switch that fails while active still flips isActive, since
+            // AudioRouter.enable() tears the old route down before attempting the
+            // new one). With refreshUI() last, that trailing apply() could wipe the
+            // very error recordReply() had just set, milliseconds earlier, in this
+            // same call. Refreshing FIRST still lets a genuine status change clear a
+            // stale failure left by an EARLIER command (apply() runs against
+            // whatever commandFailure this command's own recordReply hasn't touched
+            // yet), and then recordReply() — for THIS command's own outcome — runs
+            // last, so nothing after it can undo it. Surfaces a failure (missing
+            // permission, a refused route) inline in the window instead of
+            // discarding it — the menu bar shows the same failure via an NSAlert;
+            // the spec promises the window shows it too, inline.
             refreshUI()
+            appState.recordReply(reply)
+            // endWork() runs after refreshUI() so its rebuild (which restores the
+            // real route line in place of "Working…") reads the snapshot refreshUI()
+            // just applied, not the one from before this command started.
+            appState.endWork()
         }
     },
     onChooseDevice: { uid in
         appState.beginWork()
         DispatchQueue.main.async {
             let reply = controller.handle(.use(uid))
+            // Same ordering, same reason — see onToggle above.
+            refreshUI()
             appState.recordReply(reply)
             appState.endWork()
-            refreshUI()
         }
     },
     // Every other refresh site is a route or playback event; there is no listener
