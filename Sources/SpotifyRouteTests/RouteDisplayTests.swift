@@ -115,6 +115,18 @@ func runRouteDisplayTests() -> Int {
         try expect(!d.toggleEnabled, "no double-clicking while a command is in flight")
     }
 
+    r.test("isBusy tracks activity so device rows can be disabled mid-command") {
+        let working = RouteDisplayBuilder.build(status: .off, destinationUID: "SPEAKERS",
+                                                devices: devices(), systemDefaultUID: "IFACE",
+                                                spotify: .paused, activity: .working)
+        try expect(working.isBusy, "a command in flight must report busy")
+
+        let idle = RouteDisplayBuilder.build(status: .off, destinationUID: "SPEAKERS",
+                                             devices: devices(), systemDefaultUID: "IFACE",
+                                             spotify: .paused, activity: .idle)
+        try expect(!idle.isBusy, "no command in flight must not report busy")
+    }
+
     r.test("an active route with a missing destination is still closeable") {
         let d = RouteDisplayBuilder.build(status: .active(destinationUID: "GONE"),
                                          destinationUID: "GONE", devices: devices(),

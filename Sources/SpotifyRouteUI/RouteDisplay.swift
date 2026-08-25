@@ -43,6 +43,11 @@ public struct RouteDisplay: Equatable, Sendable {
     public let toggleEnabled: Bool
     public let devices: [DeviceRow]
     public let problem: String?
+
+    /// True while a command is in flight. Distinct from `DeviceRow.isSelectable`, which
+    /// means "this device is a legal destination" — conflating the two would make a
+    /// disabled row ambiguous between "refused" and "busy right now".
+    public let isBusy: Bool
 }
 
 public enum RouteDisplayBuilder {
@@ -117,6 +122,7 @@ public enum RouteDisplayBuilder {
                             toggleTitle: routeIsOn ? "Turn Off" : "Turn On",
                             toggleEnabled: canToggle,
                             devices: rows,
-                            problem: problem)
+                            problem: problem,
+                            isBusy: activity == .working)
     }
 }
