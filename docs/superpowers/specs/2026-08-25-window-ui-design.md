@@ -32,24 +32,46 @@ bar real estate.
 
 ## Architecture
 
-All new code lives in the **app target**. `SpotifyRouteCore` is unchanged.
+New code is split across **two** targets, not the single app target this section
+originally planned. See "Why a separate `SpotifyRouteUI` target" below for what changed
+and why. `SpotifyRouteCore` gains one additive callback (see "The one change outside the
+app target"); nothing else about it changes.
 
 ```
-Sources/SpotifyRouteApp/
+Sources/SpotifyRouteUI/          new library target, depends on SpotifyRouteCore
 ├── AppState.swift          ObservableObject — the window's single source of truth
+├── RouteDisplay.swift      pure display model (SpotifyPresence, Activity, DeviceRow, ...)
 ├── MainWindowView.swift    SwiftUI view
-├── WindowController.swift  owns the NSWindow; show / reopen behaviour
+└── WindowController.swift  owns the NSWindow; show / reopen behaviour
+
+Sources/SpotifyRouteApp/
 ├── MenuBarController.swift unchanged
-└── main.swift              updates AppState at the existing refresh points
+└── main.swift              constructs AppState/WindowController and updates them at
+                             the existing refresh points
 ```
 
-### Why the state object lives in the app target
+### Why a separate `SpotifyRouteUI` target
 
-`SpotifyRouteCore` is linked by the `spotroute` CLI. Making `RouteController` itself
-observable would pull SwiftUI and Combine into a library that a command-line tool
-links, for the benefit of a window the CLI will never show. The boundary already
-exists and is worth keeping: the core stays UI-free, and the app target owns
-presentation.
+This section originally planned for all new code to live in the existing app target, with
+`Package.swift` unchanged. That was not workable: `SpotifyRouteApp` is an
+`.executableTarget`, and Swift Package Manager cannot `import` an executable target — only
+library targets are importable. The "Testing" section below requires real unit tests
+against `AppState` and the display-derivation logic, from `SpotifyRouteTests`; code that
+cannot be imported cannot be tested, so it could not have lived in `SpotifyRouteApp`.
+
+The fix is a new library target, `SpotifyRouteUI`, holding everything that needs unit
+tests or that the SwiftUI view needs: `AppState`, the pure display model, the view itself,
+and `WindowController`. `SpotifyRouteApp` shrinks to `main.swift` and
+`MenuBarController.swift` — wiring, not logic. `SpotifyRouteApp` and `SpotifyRouteTests`
+both depend on `SpotifyRouteUI`.
+
+This does change `Package.swift` (one new target, two new dependency edges), but it
+preserves this section's actual intent: `SpotifyRouteCore` — the library `spotroute`
+links — still carries no SwiftUI or Combine, and `spotroute` still depends only on
+`SpotifyRouteCore`, exactly as before. The boundary that matters was never "the app
+target" specifically; it was keeping SwiftUI/Combine out of the library the CLI links.
+That boundary holds — it just needed a second, testable target on the app side rather
+than one, to hold it.
 
 ### How state reaches the window
 
@@ -70,8 +92,14 @@ Those are exactly the moments the window also needs to update. Each gains a matc
 
 A live "Spotify is playing" indicator needs the *current* level.
 `SpotifyWatcher` currently reports only the 0→1 *edge*, because that is all an
-armed-route re-apply needs. It gains a callback reporting the polled level on every
-tick. This is additive; the existing edge callback and its semantics are untouched.
+armed-route re-apply needs. It gains a callback reporting the polled level — fired
+whenever that level differs from the previous poll tick, in either direction, not on
+every tick regardless of change. (An earlier draft of this callback fired
+unconditionally on every tick and wired it straight to a full UI refresh; that would
+have meant enumerating every output device and resolving Spotify's process object
+every 2 seconds indefinitely, which is wasteful and was corrected before
+implementation.) This is additive; the existing edge callback and its semantics are
+untouched.
 
 ## Window content
 

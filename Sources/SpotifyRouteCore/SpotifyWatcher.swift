@@ -14,6 +14,7 @@ public final class SpotifyWatcher {
     private let onAppeared: () -> Void
     private let onVanished: () -> Void
     private let onPlaybackStarted: () -> Void
+    private let onPlaybackLevel: (Bool) -> Void
 
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
@@ -24,12 +25,27 @@ public final class SpotifyWatcher {
     /// slow enough to be invisible in CPU use.
     private let pollInterval: TimeInterval = 2.0
 
+    /// Why both `onPlaybackStarted` and `onPlaybackLevel` exist, since they look
+    /// confusingly similar:
+    ///   - `onPlaybackStarted` fires on false->true only. It drives re-applying an
+    ///     armed route, and must fire exactly once per transition — firing it again
+    ///     on every tick while already playing would re-apply a route that is
+    ///     already correctly applied.
+    ///   - `onPlaybackLevel` fires whenever the polled value differs from the
+    ///     previous tick, in either direction. It drives a live UI indicator, which
+    ///     needs to know about stops as well as starts. It is a level report, not an
+    ///     edge report — but it still only fires on change, not on every tick,
+    ///     because the UI refresh it triggers enumerates every output device and
+    ///     resolves Spotify's process object, which is wasteful to redo every 2s
+    ///     when nothing changed.
     public init(onAppeared: @escaping () -> Void,
                 onVanished: @escaping () -> Void,
-                onPlaybackStarted: @escaping () -> Void) {
+                onPlaybackStarted: @escaping () -> Void,
+                onPlaybackLevel: @escaping (Bool) -> Void = { _ in }) {
         self.onAppeared = onAppeared
         self.onVanished = onVanished
         self.onPlaybackStarted = onPlaybackStarted
+        self.onPlaybackLevel = onPlaybackLevel
     }
 
     public func start() {
@@ -57,6 +73,7 @@ public final class SpotifyWatcher {
                   app.bundleIdentifier == SpotifyProcess.bundleID else { return }
             self?.wasProducingOutput = false
             self?.onVanished()
+            self?.onPlaybackLevel(false)
         })
 
         let t = Timer(timeInterval: pollInterval, repeats: true) { [weak self] _ in
@@ -77,12 +94,18 @@ public final class SpotifyWatcher {
 
     private func poll() {
         guard let object = try? SpotifyProcess.processObject() else {
+            if wasProducingOutput {
+                onPlaybackLevel(false)
+            }
             wasProducingOutput = false
             return
         }
         let producing = SpotifyProcess.isProducingOutput(object)
         if producing && !wasProducingOutput {
             onPlaybackStarted()
+        }
+        if producing != wasProducingOutput {
+            onPlaybackLevel(producing)
         }
         wasProducingOutput = producing
     }

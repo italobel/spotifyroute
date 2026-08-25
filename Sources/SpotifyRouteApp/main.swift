@@ -234,7 +234,13 @@ let server = CommandServer(socketURL: CommandServer.defaultSocketURL) { command 
 let watcher = SpotifyWatcher(
     onAppeared: { controller.reapply(); refreshUI() },
     onVanished: { refreshUI() },
-    onPlaybackStarted: { controller.reapply(); refreshUI() }
+    onPlaybackStarted: { controller.reapply(); refreshUI() },
+    // The watcher only invokes this when the polled level actually changed since
+    // the last tick (see SpotifyWatcher's onPlaybackLevel doc comment), so this is
+    // safe to wire straight to refreshUI() without a second layer of de-duplication
+    // here — refreshUI() re-reads reality itself rather than trusting the passed
+    // Bool, which is ignored, so there is only one source of truth for the fact.
+    onPlaybackLevel: { _ in refreshUI() }
 )
 
 let appDelegate = AppDelegate(

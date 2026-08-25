@@ -133,8 +133,10 @@ is needed — ad-hoc signing is enough for a process tap. Launch it with:
 open ./build/SpotifyRoute.app
 ```
 
-It's a menu-bar-only app (no Dock icon, no window) — look for its icon in the menu
-bar to open the destination picker and toggle.
+This is a regular app with a Dock icon: its window opens automatically, showing whether
+Spotify is playing, where its audio is going, and letting you change the destination and
+toggle routing. There's also a menu bar item, kept as a fast fallback for when the window
+isn't open. See "The window" below.
 
 To install it somewhere permanent:
 
@@ -149,7 +151,7 @@ up in Spotlight and Launchpad like any other app — launch it from there, or wi
 default `PATH`; check with `echo $PATH` and add it in your shell's profile if it's
 missing, or just call the CLI by its full path (`~/.local/bin/spotroute`).
 `--install` refuses to run while an existing installed copy is running — quit it
-from its menu bar icon first, then re-run the command.
+first (⌘Q, or "Quit SpotifyRoute" from its menu bar icon), then re-run the command.
 
 If you'd rather install system-wide (this needs an admin password):
 
@@ -168,11 +170,38 @@ Optional: have it start automatically at login:
 ./build.sh --install-login-agent
 ```
 
-Remove it later with:
+**If you install this, know that SpotifyRoute will take focus at every login.** Launching
+the app always shows its window and activates it — that's the normal, correct behavior for
+a user-initiated launch (Dock, Spotlight, double-click), and the login agent uses that exact
+same launch path with nobody having asked for it at that moment. So at every login, the
+window pops up and steals focus from whatever you're doing. This is deliberate, not a bug
+to be special-cased away — see the design spec's rationale — but it's worth knowing before
+you opt in.
+
+Remove the login agent later with:
 
 ```bash
 ./build.sh --uninstall-login-agent
 ```
+
+## The window
+
+The window is the main way to use SpotifyRoute. Launch the app — from the Dock, Spotlight,
+Launchpad, or `open ~/Applications/SpotifyRoute.app` — and it opens showing whether Spotify
+is playing, the current route, a picker for the destination device, and an on/off control.
+The menu bar item is still there too, as a fast fallback for when the window isn't open,
+but it's no longer the only way in.
+
+Closing the window does **not** quit the app — routing keeps running in the background
+exactly as before, and both the Dock icon and the menu bar item remain. Click the Dock icon
+to bring the window back. Quitting is explicit: ⌘Q, or "Quit SpotifyRoute" from the menu
+bar's dropdown or the app's own menu.
+
+**Known limitation:** while a macOS permission dialog is pending (see "Permission on first
+launch" below), the window shows "Working…" and does not respond to clicks or keystrokes
+until the dialog is answered. This isn't a bug to be polished away — the Core Audio call
+that can trigger the dialog runs on the main thread and blocks it, so the window cannot
+render anything else, including a more informative message, until that call returns.
 
 ## Permission on first launch
 
