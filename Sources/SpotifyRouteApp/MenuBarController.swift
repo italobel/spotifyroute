@@ -6,16 +6,31 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let controller: RouteController
     private let devices: DeviceListing
+    /// Called by `toggleRoute()`/`chooseDestination(_:)` after a command completes,
+    /// instead of calling `refreshGlyph()` directly. Wired to `refreshUI()` in
+    /// main.swift, which refreshes this controller's glyph itself (it calls
+    /// `refreshGlyph()` as its last step) and also the window — so this one call
+    /// covers both surfaces. Not recursive: `refreshGlyph()` never calls back into
+    /// this closure. Lets a second surface (the window) stay in sync with
+    /// menu-bar-driven changes without this type knowing anything about `AppState`
+    /// or the window.
+    private let onStateChanged: () -> Void
 
-    init(controller: RouteController, devices: DeviceListing) {
+    init(controller: RouteController, devices: DeviceListing,
+         onStateChanged: @escaping () -> Void) {
         self.controller = controller
         self.devices = devices
+        self.onStateChanged = onStateChanged
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
 
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        // Not onStateChanged(): at construction time (main.swift declares `menuBar`
+        // before `appState`), the closure's captured `refreshUI` would touch an
+        // `appState` that does not exist yet. There is also no window yet to
+        // desynchronize from. Just this controller's own initial paint.
         refreshGlyph()
     }
 
@@ -124,13 +139,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func toggleRoute() {
         report(controller.handle(.toggle))
-        refreshGlyph()
+        onStateChanged()
     }
 
     @objc private func chooseDestination(_ sender: NSMenuItem) {
         guard let uid = sender.representedObject as? String else { return }
         report(controller.handle(.use(uid)))
-        refreshGlyph()
+        onStateChanged()
     }
 
     @objc private func runSelfTest() {

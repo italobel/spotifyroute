@@ -158,7 +158,26 @@ let app = NSApplication.shared
 // app is unusable when the menu bar is full, which is the problem this window solves.
 app.setActivationPolicy(.regular)
 
-let menuBar = MenuBarController(controller: controller, devices: deviceListing)
+// A .regular app needs its own NSApp.mainMenu for standard key equivalents to work
+// app-wide. The status item's own dropdown (built in MenuBarController) is a separate,
+// unattached NSMenu — AppKit only consults NSApp.mainMenu when routing a key-equivalent
+// from -sendEvent:, so anything bound only inside that dropdown (its own "t" for
+// Turn On/Off, or a "q" for Quit) is live solely while that dropdown is open, not
+// globally. Kept deliberately minimal: one Quit item bound to the standard
+// `terminate:` action, so ⌘Q reaches the same applicationWillTerminate teardown as
+// every other graceful-quit path. No File/Edit/View — nothing else here needs a menu.
+let mainMenu = NSMenu()
+let appMenuItem = NSMenuItem()
+mainMenu.addItem(appMenuItem)
+let appMenu = NSMenu()
+appMenu.addItem(NSMenuItem(title: "Quit SpotifyRoute",
+                           action: #selector(NSApplication.terminate(_:)),
+                           keyEquivalent: "q"))
+appMenuItem.submenu = appMenu
+app.mainMenu = mainMenu
+
+let menuBar = MenuBarController(controller: controller, devices: deviceListing,
+                                onStateChanged: refreshUI)
 
 let appState = AppState()
 
@@ -224,7 +243,16 @@ let appDelegate = AppDelegate(
         controller.shutdown()
         server.stop()
     },
-    onLaunch: { windowController.showWindow(); refreshUI() },
+    onLaunch: {
+        // showWindow() activates the app (NSApp.activate(ignoringOtherApps: true)),
+        // which is correct for a normal, user-initiated launch (Dock, Spotlight,
+        // double-click) but has a consequence worth recording: if the optional login
+        // agent (./build.sh --install-login-agent) is installed, this same launch path
+        // runs unattended at login and will steal focus from whatever the user is
+        // doing at that moment. Deliberately not special-cased — see the design spec.
+        windowController.showWindow()
+        refreshUI()
+    },
     onReopen: { windowController.showWindow(); refreshUI() }
 )
 app.delegate = appDelegate
