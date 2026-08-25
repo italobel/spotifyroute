@@ -10,7 +10,6 @@
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>14.2</string>
-  <key>LSUIElement</key><true/>
   <key>NSAudioCaptureUsageDescription</key>
   <string>SpotifyRoute captures Spotify's audio so it can play through the output device you choose, leaving your system default output unchanged.</string>
 </dict>
