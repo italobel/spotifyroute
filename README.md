@@ -203,13 +203,15 @@ until the dialog is answered. This isn't a bug to be polished away — the Core 
 that can trigger the dialog runs on the main thread and blocks it, so the window cannot
 render anything else, including a more informative message, until that call returns.
 
-**Known limitation:** the window refreshes itself whenever it becomes key — opening it,
-clicking the Dock icon, or clicking into it while it was already visible in the
-background — so it is always current at the moment you look at it. But while it is
-already open and sitting in the background, it does not notice a device being
-connected or disconnected, or the system default changing, on its own: there is no
-listener for those events yet. Click into the window (or close and reopen it) to pick
-up the change.
+**Known limitation:** the window refreshes itself whenever it *becomes key* — opening
+it, clicking the Dock icon, or clicking into it while it was visible but not
+focused — not on any timer or device-change listener. That covers the common case,
+but it means the window can go stale in a way that isn't obvious: if it is already
+open **and already focused**, a device being connected or disconnected, or the
+system default changing, goes unnoticed, because nothing about that made the window
+become key again — it already was key. Clicking into an already-focused window is a
+no-op for this purpose. To pick up the change, click away to another app or window
+and then back, or close the window and reopen it.
 
 ## Permission on first launch
 

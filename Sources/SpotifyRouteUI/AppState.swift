@@ -39,13 +39,16 @@ public final class AppState: ObservableObject {
     /// do, not derived state about the world — unlike `Snapshot`, it cannot be
     /// recomputed from current reality, so it is tracked separately and survives
     /// `apply(_:)` calls that carry no news about it either way (e.g. a snapshot
-    /// pushed by an unrelated Spotify-launch or device-change event). It is cleared
-    /// only by a subsequent command's own outcome: success clears it, another
-    /// failure replaces it. Deliberately distinct from `RouteDisplay.problem`, which
-    /// describes a standing condition of the world (missing destination,
-    /// misconfiguration) rather than the outcome of one past action — conflating the
-    /// two would make a shown message ambiguous between "this is wrong right now"
-    /// and "the last thing you clicked didn't work."
+    /// pushed by an unrelated Spotify-launch or device-change event that leaves
+    /// `RouteStatus` unchanged). It is cleared by a subsequent command's own outcome
+    /// (success clears it, another failure replaces it) — see `recordReply` — and
+    /// also by `apply(_:)` itself when the incoming snapshot's `RouteStatus` differs
+    /// from the one already on file. See `apply(_:)` for why that second path exists:
+    /// not every success reaches `recordReply`. Deliberately distinct from
+    /// `RouteDisplay.problem`, which describes a standing condition of the world
+    /// (missing destination, misconfiguration) rather than the outcome of one past
+    /// action — conflating the two would make a shown message ambiguous between
+    /// "this is wrong right now" and "the last thing you clicked didn't work."
     @Published public private(set) var commandFailure: String?
 
     /// The most recent snapshot, kept so `endWork()` can rebuild from real state
@@ -65,7 +68,34 @@ public final class AppState: ObservableObject {
                                                  activity: .idle)
     }
 
+    /// Applies a fresh read of reality.
+    ///
+    /// Also clears `commandFailure` when `snapshot.status` differs from the status
+    /// already on file (before this call overwrites it). Rationale: `recordReply`
+    /// only runs for commands the *window* itself issued, but a route can also change
+    /// via the control socket (CLI, Stream Deck) or `SpotifyWatcher`'s automatic
+    /// `reapply()` — neither of those paths threads its `Reply` through `recordReply`,
+    /// so without this, a window command that fails leaves red error text on screen
+    /// that a later, unrelated success from one of those paths would never clear. A
+    /// changed `RouteStatus` is decisive evidence the world has moved past whatever
+    /// failed, even though this call doesn't know what that was.
+    ///
+    /// Deliberately keyed on a *transition* (old status != new status), not merely on
+    /// e.g. "status is now .active": comparing to the status already on file is what
+    /// keeps this from self-clearing a failure recorded moments ago by the very same
+    /// call chain (a window command's `recordReply` immediately followed by the
+    /// `refreshUI()` that calls this) — in that case `latest.status` already reflects
+    /// the command's outcome (RouteController never persists a failed intent), so the
+    /// incoming snapshot matches it exactly and no clear happens. It only fires for a
+    /// snapshot arriving with a status this instance has not already recorded as
+    /// current — which is exactly the later, independent event this exists for. This
+    /// is why the guarded test "an unrelated snapshot does not clear a failure" still
+    /// holds: that test's snapshot repeats the same `.off` status already on file, so
+    /// no transition occurs.
     public func apply(_ snapshot: Snapshot) {
+        if snapshot.status != latest.status {
+            commandFailure = nil
+        }
         latest = snapshot
         rebuild()
     }

@@ -266,13 +266,25 @@ let appDelegate = AppDelegate(
         // agent (./build.sh --install-login-agent) is installed, this same launch path
         // runs unattended at login and will steal focus from whatever the user is
         // doing at that moment. Deliberately not special-cased — see the design spec.
-        // refreshUI() first, showWindow() second: the guarantee that the window never
-        // shows AppState's empty initial snapshot should hold on its own, not depend
-        // on the final `refreshUI()` call further down this file having already run.
-        refreshUI()
+        //
+        // No explicit refreshUI() call here (there used to be one, right before
+        // showWindow()): WindowController's onBecomeKey — wired to refreshUI() below
+        // — already fires from inside showWindow()'s makeKeyAndOrderFront, and on a
+        // first launch the window has never been key before, so that transition (and
+        // therefore the refresh) is guaranteed to happen, not merely likely. That
+        // guarantee lives locally in WindowController — every caller of showWindow()
+        // gets it for free — rather than needing every call site to remember its own
+        // extra refreshUI() first. Keeping a second explicit call here bought nothing
+        // but a duplicate device enumeration on every launch.
         windowController.showWindow()
     },
-    onReopen: { windowController.showWindow(); refreshUI() }
+    // Same reasoning as onLaunch: showWindow() already refreshes via onBecomeKey.
+    // Reopening only happens when the window was hidden (windowShouldClose orders it
+    // out, which drops key status) or the app was not the active app (its window
+    // cannot have been key), so makeKeyAndOrderFront here is always a real
+    // not-key -> key transition and onBecomeKey always fires. A trailing refreshUI()
+    // call here would just repeat that same read a second time.
+    onReopen: { windowController.showWindow() }
 )
 app.delegate = appDelegate
 

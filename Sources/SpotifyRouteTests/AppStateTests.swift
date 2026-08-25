@@ -94,5 +94,28 @@ func runAppStateTests() -> Int {
                         "a snapshot pushed by e.g. a device-change refresh carries no news about the last command")
     }
 
+    r.test("a snapshot whose status changed clears a stale failure even without recordReply") {
+        // Models the CLI/Stream Deck/reapply() paths: none of them call recordReply,
+        // but a status transition is itself proof the failed window command is stale.
+        let s = AppState()
+        s.apply(snapshot(.off, "SPEAKERS"))
+        s.recordReply(.error("permission denied"))
+        s.apply(snapshot(.active(destinationUID: "SPEAKERS"), "SPEAKERS", .playing))
+        try expectNil(s.commandFailure,
+                      "the route actually turned on since the failure, so it can no longer be true")
+    }
+
+    r.test("a same-status snapshot right after recording a failure does not clear it") {
+        // Guards against self-clearing: a failed command's own follow-up refresh
+        // reports the same status that was already on file (RouteController never
+        // persists a failed intent), so this must not be mistaken for a transition.
+        let s = AppState()
+        s.apply(snapshot(.active(destinationUID: "SPEAKERS"), "SPEAKERS", .playing))
+        s.recordReply(.error("could not switch destination"))
+        s.apply(snapshot(.active(destinationUID: "SPEAKERS"), "SPEAKERS", .playing))
+        try expectEqual(s.commandFailure, "could not switch destination",
+                        "status did not actually change, so the failure is still live")
+    }
+
     return r.summarise()
 }
