@@ -5,6 +5,10 @@ import SpotifyRouteCore
 /// Observable shell around `RouteDisplayBuilder`. Deliberately holds no decisions:
 /// every string and every enabled flag is derived, so the logic stays in the pure,
 /// tested builder and this type stays trivial.
+///
+/// Main-thread only: all mutations (`apply`, `beginWork`, `endWork`) must be called from the
+/// main thread. SwiftUI publishes changes on the main thread, so background mutations would
+/// violate the observable layer's invariants.
 public final class AppState: ObservableObject {
 
     /// Everything the display needs, captured at one instant.

@@ -59,11 +59,16 @@ func runAppStateTests() -> Int {
                         "the snapshot that arrived during the work is not lost")
     }
 
-    r.test("endWork without beginWork is harmless") {
+    r.test("endWork called without new beginWork does not corrupt state") {
         let s = AppState()
         s.apply(snapshot(.off, "SPEAKERS"))
+        s.beginWork()
         s.endWork()
-        try expectEqual(s.display.routeLine, "Off — Built-in Speakers selected")
+        try expectEqual(s.display.routeLine, "Off — Built-in Speakers selected",
+                        "display restored after work completes")
+        s.endWork()
+        try expectEqual(s.display.routeLine, "Off — Built-in Speakers selected",
+                        "second endWork call without new beginWork leaves real state intact")
     }
 
     return r.summarise()
