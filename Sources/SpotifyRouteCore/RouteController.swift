@@ -79,6 +79,15 @@ public final class RouteController {
             // destination can be restored to its prior mute state once the new one is
             // applied below — otherwise the old device is left unmuted (and its
             // priorMute bookkeeping leaked) for good. See handleOn()'s own restore.
+            // Also doubles as the rollback value below: handleOn() itself never
+            // persists an intent it failed to apply (see its own doc comment and
+            // the test guarding that), but that discipline only covers the UID
+            // handleOn() is working with. Persisting the new UID here, before
+            // knowing whether the handleOn() call below succeeds, would silently
+            // defeat it for the switch-while-active path specifically — settings
+            // would point at a destination that was never actually applied, while
+            // reality stayed on the old one (or went silent), and status derived
+            // from the persisted UID would look right when it is not.
             let previousUID = settings.destinationUID
             settings.destinationUID = uid
             try store.save(settings)
@@ -88,7 +97,20 @@ public final class RouteController {
                    let previousDevice = all.first(where: { $0.uid == previousUID }) {
                     restoreUnlessDefault(previousDevice)
                 }
-                return handleOn()
+                let reply = handleOn()
+                if case .error = reply {
+                    // The switch failed to apply — restore the previously persisted
+                    // destination so a failed `use` leaves Settings matching what is
+                    // actually still (or no longer) running, exactly as a failed
+                    // `on` already does. Without this, AppState's stale-failure
+                    // clearing (which keys on a genuine RouteStatus transition) would
+                    // see status change anyway — because the UID it derives the
+                    // display from had already moved — and wipe the very failure
+                    // message it should be showing.
+                    settings.destinationUID = previousUID
+                    try? store.save(settings)
+                }
+                return reply
             }
             return .ok("destination set to \(device.name)")
         } catch {

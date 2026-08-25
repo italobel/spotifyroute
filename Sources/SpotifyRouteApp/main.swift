@@ -268,23 +268,36 @@ let appDelegate = AppDelegate(
         // doing at that moment. Deliberately not special-cased — see the design spec.
         //
         // No explicit refreshUI() call here (there used to be one, right before
-        // showWindow()): WindowController's onBecomeKey — wired to refreshUI() below
-        // — already fires from inside showWindow()'s makeKeyAndOrderFront, and on a
-        // first launch the window has never been key before, so that transition (and
-        // therefore the refresh) is guaranteed to happen, not merely likely. That
-        // guarantee lives locally in WindowController — every caller of showWindow()
-        // gets it for free — rather than needing every call site to remember its own
-        // extra refreshUI() first. Keeping a second explicit call here bought nothing
-        // but a duplicate device enumeration on every launch.
+        // showWindow()). The "window never renders AppState's empty initial state"
+        // guarantee does NOT depend on that, and does NOT depend on WindowController's
+        // onBecomeKey either — it comes from the plain top-level `refreshUI()` call
+        // right before `app.run()` at the bottom of this file. That call is ordinary
+        // synchronous code that runs before `app.run()` is even entered, and
+        // `applicationDidFinishLaunching` (which is what invokes this closure) can only
+        // fire once `app.run()`'s startup sequence reaches it — so by the time
+        // `showWindow()` below executes, AppState already holds a real snapshot,
+        // unconditionally, regardless of window/key-state timing. (onBecomeKey does
+        // also fire here, since a first-ever showWindow() is a genuine not-key -> key
+        // transition, but that is a second, redundant source of freshness on this
+        // path, not the one this guarantee actually rests on.)
         windowController.showWindow()
     },
-    // Same reasoning as onLaunch: showWindow() already refreshes via onBecomeKey.
-    // Reopening only happens when the window was hidden (windowShouldClose orders it
-    // out, which drops key status) or the app was not the active app (its window
-    // cannot have been key), so makeKeyAndOrderFront here is always a real
-    // not-key -> key transition and onBecomeKey always fires. A trailing refreshUI()
-    // call here would just repeat that same read a second time.
-    onReopen: { windowController.showWindow() }
+    // Unlike onLaunch, this path keeps its own unconditional refreshUI() after
+    // showWindow() — this is NOT the same situation, and treating it as such was a
+    // real regression once caught by review. applicationShouldHandleReopen fires on
+    // EVERY Dock-icon click, including while the window is already visible AND
+    // already key (the app is frontmost, the window has focus, the user clicks the
+    // Dock icon anyway) — `hasVisibleWindows` is passed in for exactly this case and
+    // is otherwise unused here. When the window is already key, showWindow()'s
+    // makeKeyAndOrderFront(nil) is a no-op: it does not resign and re-acquire key
+    // status, so windowDidBecomeKey does not fire again and onBecomeKey never runs.
+    // Relying solely on onBecomeKey here would silently reintroduce exactly the gap
+    // the README documents (a device connect/disconnect or default change going
+    // unnoticed while the window is frontmost) on the one path — the Dock icon —
+    // that is supposed to be a reliable way to force a refresh. The extra device
+    // enumeration this costs on the (more common) not-key case, where onBecomeKey
+    // already refreshed once, is cheap; a stale window is not.
+    onReopen: { windowController.showWindow(); refreshUI() }
 )
 app.delegate = appDelegate
 

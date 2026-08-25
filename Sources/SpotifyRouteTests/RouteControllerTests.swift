@@ -16,8 +16,28 @@ final class FakeRouter: Routing {
     var enableCalls: [String] = []
     var disableCount = 0
     var errorToThrow: Error?
+    /// Per-UID failures, for constructing "switch succeeds to A, then fails
+    /// switching to B" — `errorToThrow` alone can't do that since it fires on
+    /// every call regardless of destination.
+    var errorForUID: [String: Error] = [:]
 
     func enable(destination: OutputDevice, processObject: AudioObjectID) throws {
+        // Mirrors AudioRouter.enable() (see AudioRouter.swift): switching to a
+        // DIFFERENT destination while already active tears the old route down
+        // first, so isActive genuinely drops even if the enable that follows then
+        // fails — the old, still-working destination does not stay active. This
+        // fixture used to skip that, which is exactly why the switch-while-active
+        // failure path (RouteControllerTests: "switching destination while active,
+        // and the switch fails, ...") was unconstructible until now.
+        //
+        // Deliberately does NOT also mirror AudioRouter's same-destination
+        // idempotent early return — see "a repeated on while already active calls
+        // prepare again on the same device" below for why that divergence is
+        // intentional.
+        if isActive, activeDestinationUID != destination.uid {
+            disable()
+        }
+        if let e = errorForUID[destination.uid] { throw e }
         if let e = errorToThrow { throw e }
         enableCalls.append(destination.uid)
         isActive = true
@@ -184,6 +204,35 @@ func runRouteControllerTests() -> Int {
         try expectEqual(audibility.restored, ["SPEAKERS"],
                         "the old destination is restored to its prior mute state, not left " +
                         "unmuted forever, when a new destination takes over")
+    }
+
+    r.test("switching destination while active, and the switch fails, leaves the persisted destination unchanged") {
+        // Regression test for a real defect: handleUse used to persist the NEW uid
+        // unconditionally, before knowing whether the handleOn() it triggers (for an
+        // already-active route being switched) would succeed. A failed switch left
+        // Settings pointing at a destination that was never actually applied — this
+        // constructs exactly that path: two non-default devices (defaultUID = nil,
+        // same trick as "changing destination while active" above) so a real
+        // switch-between-two-destinations is reachable, then a per-UID router
+        // failure (errorForUID) on the SECOND destination only, so the first `on`
+        // genuinely succeeds and only the switch fails.
+        let devices = FakeDevices()
+        devices.defaultUID = nil
+        let router = FakeRouter()
+        let (c, store, _, _, _, _) = makeController(router: router, devices: devices)
+        _ = c.handle(.use("SPEAKERS"))
+        guard case .ok = c.handle(.on) else { throw TestFailure("expected ok") }
+        try expectEqual(store.settings.destinationUID, "SPEAKERS")
+
+        router.errorForUID["IFACE"] = RouteError.coreAudio("AudioDeviceStart", OSStatus(-10875))
+        guard case .error(let msg) = c.handle(.use("IFACE")) else {
+            throw TestFailure("expected error — the switch fails to apply")
+        }
+        try expect(msg.contains("AudioDeviceStart"), "surfaces the failing call")
+        try expectEqual(store.settings.destinationUID, "SPEAKERS",
+                        "a failed switch must not leave the persisted destination pointing " +
+                        "at a device that was never actually applied")
+        try expectEqual(c.destinationUID, "SPEAKERS", "same guarantee via the public accessor")
     }
 
     r.test("a router failure reports the error and does not claim success") {

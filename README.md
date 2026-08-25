@@ -203,15 +203,17 @@ until the dialog is answered. This isn't a bug to be polished away — the Core 
 that can trigger the dialog runs on the main thread and blocks it, so the window cannot
 render anything else, including a more informative message, until that call returns.
 
-**Known limitation:** the window refreshes itself whenever it *becomes key* — opening
-it, clicking the Dock icon, or clicking into it while it was visible but not
-focused — not on any timer or device-change listener. That covers the common case,
-but it means the window can go stale in a way that isn't obvious: if it is already
-open **and already focused**, a device being connected or disconnected, or the
-system default changing, goes unnoticed, because nothing about that made the window
-become key again — it already was key. Clicking into an already-focused window is a
-no-op for this purpose. To pick up the change, click away to another app or window
-and then back, or close the window and reopen it.
+**Known limitation:** the window refreshes on launch, and it refreshes whenever it
+*becomes key* — clicking into it while it was visible but not focused — not on any
+timer or device-change listener. **Clicking the Dock icon always refreshes it too,
+even if the window was already open and already focused** — that path is
+deliberately unconditional, specifically to give you one reliable way to force a
+refresh. The one real gap: if the window is already open **and already focused**,
+clicking directly into it (not via the Dock icon) is a no-op for this purpose —
+nothing about that click makes it become key again, since it already was, so a
+device being connected or disconnected, or the system default changing, goes
+unnoticed. To pick up the change without the Dock icon, click away to another app or
+window and then back, or close the window and reopen it.
 
 ## Permission on first launch
 
