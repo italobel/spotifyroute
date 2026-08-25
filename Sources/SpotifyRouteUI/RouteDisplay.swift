@@ -110,8 +110,7 @@ public enum RouteDisplayBuilder {
         }
 
         let canToggle = activity == .idle
-            && problem == nil
-            && destinationName != nil
+            && (routeIsOn || (problem == nil && destinationName != nil))
 
         return RouteDisplay(spotifyLine: spotifyLine,
                             routeLine: routeLine,

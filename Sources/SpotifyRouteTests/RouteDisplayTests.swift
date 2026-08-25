@@ -53,6 +53,7 @@ func runRouteDisplayTests() -> Int {
                                          systemDefaultUID: "IFACE", spotify: .paused,
                                          activity: .idle)
         try expectEqual(d.problem, "no destination device chosen")
+        try expectEqual(d.routeLine, "Not configured — no destination device chosen")
         try expect(!d.toggleEnabled, "cannot toggle a misconfigured route")
     }
 
@@ -60,6 +61,7 @@ func runRouteDisplayTests() -> Int {
         let d = RouteDisplayBuilder.build(status: .off, destinationUID: "GONE",
                                          devices: devices(), systemDefaultUID: "IFACE",
                                          spotify: .paused, activity: .idle)
+        try expectEqual(d.routeLine, "Off — selected destination unavailable")
         try expect(d.problem?.contains("GONE") == true, "names the missing device")
         try expect(!d.toggleEnabled, "cannot route to a device that is not there")
     }
@@ -111,6 +113,32 @@ func runRouteDisplayTests() -> Int {
                                          spotify: .paused, activity: .working)
         try expectEqual(d.routeLine, "Working…")
         try expect(!d.toggleEnabled, "no double-clicking while a command is in flight")
+    }
+
+    r.test("an active route with a missing destination is still closeable") {
+        let d = RouteDisplayBuilder.build(status: .active(destinationUID: "GONE"),
+                                         destinationUID: "GONE", devices: devices(),
+                                         systemDefaultUID: "IFACE", spotify: .playing,
+                                         activity: .idle)
+        try expectEqual(d.toggleTitle, "Turn Off")
+        try expect(d.toggleEnabled, "route is on, so turning it off must be possible even if destination vanished")
+    }
+
+    r.test("an armed route with a missing destination is still closeable") {
+        let d = RouteDisplayBuilder.build(status: .armed(destinationUID: "GONE"),
+                                         destinationUID: "GONE", devices: devices(),
+                                         systemDefaultUID: "IFACE", spotify: .paused,
+                                         activity: .idle)
+        try expectEqual(d.toggleTitle, "Turn Off")
+        try expect(d.toggleEnabled, "route is on, so turning it off must be possible even if destination vanished")
+    }
+
+    r.test("cannot turn on a route if the destination is not available") {
+        let d = RouteDisplayBuilder.build(status: .off, destinationUID: "GONE",
+                                         devices: devices(), systemDefaultUID: "IFACE",
+                                         spotify: .paused, activity: .idle)
+        try expectEqual(d.toggleTitle, "Turn On")
+        try expect(!d.toggleEnabled, "the destination does not exist, so turning on is impossible")
     }
 
     return r.summarise()
