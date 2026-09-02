@@ -3,48 +3,103 @@
 SpotifyRoute sends Spotify's audio — and only Spotify's — to an output device you
 choose, while your Mac's system default output stays exactly where it was.
 
-## What it does
+**Screenshot: the SpotifyRoute window**
+<!-- TODO: add a screenshot of the app's window here -->
 
-Spotify's desktop client has no output picker. It just follows whatever your Mac
-considers the default output device. So if you want Spotify playing somewhere
-specific, the usual fix is to change your system default — which also drags every
-call, meeting, and notification sound along with it, since they all follow the same
-setting. SpotifyRoute breaks that link: pick a destination for Spotify once, and
-everything else keeps using the system default as normal.
+## Requirements
 
-The author's own setup is the motivating case: a RODECaster Pro II is the system
-default, so every call lands on it automatically, while Spotify plays from the
-MacBook's built-in speakers instead.
+| | |
+|---|---|
+| macOS | 14.2 or later (that's the release Core Audio process taps first shipped in) |
+| Toolchain | Command Line Tools only — no Xcode install needed |
+| Spotify | The desktop client (`com.spotify.client`) |
 
-## How it works
+**Developed and verified only on macOS 26.6, on Apple Silicon.** It should work on
+14.2 and later, but that has not been tested — if you try it on an older release,
+the permission and self-test sections below are the places to check first.
 
-SpotifyRoute uses a Core Audio **process tap** scoped to Spotify's process
-(`stereoMixdownOfProcesses`, resolved against `com.spotify.client`), with
-`muteBehavior = .mutedWhenTapped`. That setting is what makes this a *move* rather
-than a copy: the instant the tap engages, Spotify goes silent on its normal output,
-and its audio appears only at the destination.
+Command Line Tools alone can't run XCTest or swift-testing — both require a full
+Xcode install — so this project ships its own small test harness instead of
+depending on either.
 
-The tap feeds a private aggregate device whose main sub-device is the destination
-you chose, so the tap and the destination share one clock domain and need no
-resampling. There is no kernel extension and no virtual audio driver involved, and
-your system default output device is never modified — not its identity, not its
-volume, nothing.
+## Install
 
-There is also no notion of a "source device" anywhere in the code. The tap is bound
-to Spotify's process, not to any particular output, so if you change your system
-default — new headphones, a dock, AirPods, whatever — the route is unaffected,
-because it never knew what the default was in the first place.
+```bash
+git clone https://github.com/italobel/spotifyroute.git
+cd spotifyroute
+./build.sh
+```
 
-One more thing routing does deliberately: turning a route on unmutes the
-destination device, and raises its volume to 0.5 if it reads below 0.2 or can't be
-read at all. This exists because a device that isn't your system default keeps its
-own independent mute and volume state — the kind your keyboard's volume keys never
-reach — and an early version of this app failed an audible test outright because
-the destination was muted at the device level while reporting 1.000 volume.
-Turning the route off restores the destination's prior *mute* state, but
-deliberately not its prior volume: if you turned the volume up while listening,
-putting the old value back would silently undo that change. If you've deliberately
-muted a monitor or interface, know that routing Spotify to it will unmute it.
+This compiles the app and CLI, assembles `build/SpotifyRoute.app`, ad-hoc signs it,
+and drops `build/spotroute` next to it. No Developer ID or Apple Developer account
+is needed — ad-hoc signing is enough for a process tap. Launch it with:
+
+```bash
+open ./build/SpotifyRoute.app
+```
+
+This is a regular app with a Dock icon: its window opens automatically, showing whether
+Spotify is playing, where its audio is going, and letting you change the destination and
+toggle routing. There's also a menu bar item, kept as a fast fallback for when the window
+isn't open. See "The window" below.
+
+**Run the tests before you trust any of the claims below.** There are 83 tests across
+8 suites, all passing:
+
+```bash
+swift run SpotifyRouteTests
+```
+
+It's a plain executable rather than an XCTest target, because XCTest needs a full
+Xcode install and this project only requires Command Line Tools (see Requirements
+above). This README's whole pitch is "don't take the scoping on faith, read it" —
+running the suite is the cheapest way to check that instead of trusting the prose.
+
+To install it somewhere permanent:
+
+```bash
+./build.sh --install
+```
+
+This copies the app to `~/Applications/SpotifyRoute.app` and the CLI to
+`~/.local/bin/spotroute`. `~/Applications` needs no admin password and still shows
+up in Spotlight and Launchpad like any other app — launch it from there, or with
+`open ~/Applications/SpotifyRoute.app`. `~/.local/bin` is **not** on macOS's
+default `PATH`; check with `echo $PATH` and add it in your shell's profile if it's
+missing, or just call the CLI by its full path (`~/.local/bin/spotroute`).
+`--install` refuses to run while an existing installed copy is running — quit it
+first (⌘Q, or "Quit SpotifyRoute" from its menu bar icon), then re-run the command.
+
+If you'd rather install system-wide (this needs an admin password):
+
+```bash
+sudo cp -R build/SpotifyRoute.app /Applications/SpotifyRoute.app
+sudo cp build/spotroute /usr/local/bin/spotroute
+```
+
+A locally built app carries no quarantine attribute, so macOS shows no Gatekeeper
+warning either way — that's the main reason this project is distributed as source
+you build rather than as a signed download.
+
+Optional: have it start automatically at login:
+
+```bash
+./build.sh --install-login-agent
+```
+
+**If you install this, know that SpotifyRoute will take focus at every login.** Launching
+the app always shows its window and activates it — that's the normal, correct behavior for
+a user-initiated launch (Dock, Spotlight, double-click), and the login agent uses that exact
+same launch path with nobody having asked for it at that moment. So at every login, the
+window pops up and steals focus from whatever you're doing. This is deliberate, not a bug
+to be special-cased away — see the design spec's rationale — but it's worth knowing before
+you opt in.
+
+Remove the login agent later with:
+
+```bash
+./build.sh --uninstall-login-agent
+```
 
 ## Security and privacy
 
@@ -101,88 +156,48 @@ that terminal permission (System Settings → Privacy & Security, under Audio
 Recording) isn't needed once SpotifyRoute is installed properly, and you can revoke
 it.
 
-## Requirements
+## What it does
 
-| | |
-|---|---|
-| macOS | 14.2 or later (that's the release Core Audio process taps first shipped in) |
-| Toolchain | Command Line Tools only — no Xcode install needed |
-| Spotify | The desktop client (`com.spotify.client`) |
+Spotify's desktop client has no output picker. It just follows whatever your Mac
+considers the default output device. So if you want Spotify playing somewhere
+specific, the usual fix is to change your system default — which also drags every
+call, meeting, and notification sound along with it, since they all follow the same
+setting. SpotifyRoute breaks that link: pick a destination for Spotify once, and
+everything else keeps using the system default as normal.
 
-**Developed and verified only on macOS 26.6, on Apple Silicon.** It should work on
-14.2 and later, but that has not been tested — if you try it on an older release,
-the permission and self-test sections below are the places to check first.
+The author's own setup is the motivating case: a RODECaster Pro II is the system
+default, so every call lands on it automatically, while Spotify plays from the
+MacBook's built-in speakers instead.
 
-Command Line Tools alone can't run XCTest or swift-testing — both require a full
-Xcode install — so this project ships its own small test harness instead of
-depending on either.
+## How it works
 
-## Install
+SpotifyRoute uses a Core Audio **process tap** scoped to Spotify's process
+(`stereoMixdownOfProcesses`, resolved against `com.spotify.client`), with
+`muteBehavior = .mutedWhenTapped`. That setting is what makes this a *move* rather
+than a copy: the instant the tap engages, Spotify goes silent on its normal output,
+and its audio appears only at the destination.
 
-```bash
-git clone https://github.com/italobel/spotifyroute.git
-cd spotifyroute
-./build.sh
-```
+The tap feeds a private aggregate device whose main sub-device is the destination
+you chose, so the tap and the destination share one clock domain and need no
+resampling. There is no kernel extension and no virtual audio driver involved, and
+your system default output device is never modified — not its identity, not its
+volume, nothing.
 
-This compiles the app and CLI, assembles `build/SpotifyRoute.app`, ad-hoc signs it,
-and drops `build/spotroute` next to it. No Developer ID or Apple Developer account
-is needed — ad-hoc signing is enough for a process tap. Launch it with:
+There is also no notion of a "source device" anywhere in the code. The tap is bound
+to Spotify's process, not to any particular output, so if you change your system
+default — new headphones, a dock, AirPods, whatever — the route is unaffected,
+because it never knew what the default was in the first place.
 
-```bash
-open ./build/SpotifyRoute.app
-```
-
-This is a regular app with a Dock icon: its window opens automatically, showing whether
-Spotify is playing, where its audio is going, and letting you change the destination and
-toggle routing. There's also a menu bar item, kept as a fast fallback for when the window
-isn't open. See "The window" below.
-
-To install it somewhere permanent:
-
-```bash
-./build.sh --install
-```
-
-This copies the app to `~/Applications/SpotifyRoute.app` and the CLI to
-`~/.local/bin/spotroute`. `~/Applications` needs no admin password and still shows
-up in Spotlight and Launchpad like any other app — launch it from there, or with
-`open ~/Applications/SpotifyRoute.app`. `~/.local/bin` is **not** on macOS's
-default `PATH`; check with `echo $PATH` and add it in your shell's profile if it's
-missing, or just call the CLI by its full path (`~/.local/bin/spotroute`).
-`--install` refuses to run while an existing installed copy is running — quit it
-first (⌘Q, or "Quit SpotifyRoute" from its menu bar icon), then re-run the command.
-
-If you'd rather install system-wide (this needs an admin password):
-
-```bash
-sudo cp -R build/SpotifyRoute.app /Applications/SpotifyRoute.app
-sudo cp build/spotroute /usr/local/bin/spotroute
-```
-
-A locally built app carries no quarantine attribute, so macOS shows no Gatekeeper
-warning either way — that's the main reason this project is distributed as source
-you build rather than as a signed download.
-
-Optional: have it start automatically at login:
-
-```bash
-./build.sh --install-login-agent
-```
-
-**If you install this, know that SpotifyRoute will take focus at every login.** Launching
-the app always shows its window and activates it — that's the normal, correct behavior for
-a user-initiated launch (Dock, Spotlight, double-click), and the login agent uses that exact
-same launch path with nobody having asked for it at that moment. So at every login, the
-window pops up and steals focus from whatever you're doing. This is deliberate, not a bug
-to be special-cased away — see the design spec's rationale — but it's worth knowing before
-you opt in.
-
-Remove the login agent later with:
-
-```bash
-./build.sh --uninstall-login-agent
-```
+One more thing routing does deliberately: turning a route on unmutes the
+destination device, and raises its volume to 0.5 if it reads below 0.2 or can't be
+read at all. This exists because a device that isn't your system default keeps its
+own independent mute and volume state — the kind your keyboard's volume keys never
+reach — and an early version of this app failed an audible test outright because
+the destination was muted at the device level while reporting 1.000 volume.
+Turning the route off restores the destination's prior *mute* state, but
+deliberately not its prior volume: if you turned the volume up while listening,
+putting the old value back would silently undo that change. If you've deliberately
+muted a monitor or interface, know that routing Spotify to it will unmute it.
 
 ## The window
 
@@ -256,6 +271,9 @@ spotroute — control SpotifyRoute
   spotroute list            list available output devices
   spotroute use "<uid>"     choose the destination device (quote UID if it contains spaces)
   spotroute selftest        verify audio really flows (uses the app's permission)
+
+Stream Deck: use a Multi Action Switch whose two states run
+'spotroute on' and 'spotroute off', so the key icon tracks the real state.
 ```
 
 `selftest` blocks for up to ~13 seconds while it plays and measures a test tone —
@@ -293,7 +311,7 @@ AppleUSBAudioEngine:RØDE:RODECaster Pro II:GV1234567:4,5
 ```
 
 **Always quote the UID** when you pass it to `use`. A worked example — the `list`
-output below is real, taken from the author's own machine:
+output below is real output, with hardware serials replaced by placeholders:
 
 ```
 $ spotroute list
@@ -369,6 +387,19 @@ whatever it is) to be default.
 **I was prompted for permission again after rebuilding.** Expected — see
 "Permission on first launch" above.
 
+**Something else is wrong.** Please open an issue:
+https://github.com/italobel/spotifyroute/issues
+
+## Uninstall
+
+- App: `rm -rf ~/Applications/SpotifyRoute.app` (or the `/Applications` copy, if you
+  used the system-wide install).
+- CLI: `rm ~/.local/bin/spotroute` (or `/usr/local/bin/spotroute`).
+- Settings: `rm -rf ~/Library/Application\ Support/SpotifyRoute/`.
+- Login agent, if you installed one: `./build.sh --uninstall-login-agent`.
+- Revoke the audio-recording grant in System Settings → Privacy & Security → Audio
+  Recording, if you'd rather not leave it around.
+
 ## Limitations
 
 - Spotify only. No other app's audio is touched.
@@ -388,25 +419,13 @@ whatever it is) to be default.
   the route armed, run `spotroute selftest` to check whether the route itself is
   silently broken before assuming this is the cause.
 - **Non-48 kHz destinations work, but intermittently show a peak 6.8–7.6% above the
-  source tone — the cause is not established.** Tested with a 44.1 kHz virtual device
-  (`spotroute selftest`, 8 runs): every run passed with real, non-zero audio, but 2 of
-  the 8 measured peak ≈0.267–0.269 against a source amplitude of 0.25 (6.8–7.6% high); a
-  matching-rate 48 kHz destination showed no such outliers across the same number of
-  runs. An earlier version of this document attributed the overshoot to
-  sample-rate-conversion ripple; that explanation does not survive its own numbers and
-  has been retracted here. The total SRC error for a 440 Hz tone at these rates is
-  bounded around 0.04% (the intersample-peak deficit is `1 − cos(π·440/48000) ≈
-  0.0004`) — two orders of magnitude below what was measured. The intermittency argues
-  against a phase-dependent steady-state effect too: `Metrics.peak` is a monotone
-  running max over roughly 132,000 samples per run, so a true steady-state ripple would
-  visit its worst phase in every run and should have produced 8 outliers out of 8, not
-  2. Benign candidates (the tone's onset transient, the HAL's own output-start ramp) and
-  one non-benign candidate (an occasional drift-compensation sample slip, which would be
-  audible) remain undistinguished, so "not corruption" is not yet an earned conclusion.
-  The falsifiable test that would settle it: log the callback index at which the peak
-  occurs, or reset `peak` after the first N callbacks — if the outliers vanish, it was
-  the tone's onset transient. Until that test is run, treat a non-48 kHz destination as
-  not guaranteed to sound bit-identical to a matching-rate one.
+  source tone — the cause is not established.** Every run passes with real, non-zero
+  audio; the anomaly is in amplitude, not silence, and a leading hypothesis
+  (sample-rate-conversion ripple) has already been tested and retracted. Full
+  measurement data and the falsifiable test that would settle it are in
+  [`docs/non-48khz-overshoot.md`](docs/non-48khz-overshoot.md). Until that test is
+  run, treat a non-48 kHz destination as not guaranteed to sound bit-identical to a
+  matching-rate one.
 - **Bluetooth destinations are untested, including which code path they exercise.** No
   Bluetooth audio device was available during development to route to. An earlier
   version of this document asserted that a Bluetooth headset is input-bearing and
