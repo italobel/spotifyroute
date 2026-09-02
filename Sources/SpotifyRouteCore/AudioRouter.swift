@@ -75,11 +75,20 @@ public final class AudioRouter {
         description.name = "SpotifyRoute"
         description.isPrivate = true
         description.muteBehavior = .mutedWhenTapped
+        // `isProcessRestoreEnabled` only exists in the macOS 26 SDK. `#available` is a
+        // runtime check and cannot hide a symbol the SDK doesn't declare, so an older
+        // toolchain (Xcode 16 / Swift 6.1, macOS 15 SDK) fails to compile this line —
+        // which is exactly what happened on CI's macos-15 runner. The compiler-version
+        // guard keeps the source buildable on both toolchains; Swift 6.2 is the compiler
+        // that ships alongside the macOS 26 SDK.
+        #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
             // Opportunistic: lets the OS reattach the tap when Spotify relaunches.
-            // Never relied upon, since the supported floor is 14.2.
+            // Never relied upon, since the supported floor is 14.2 and SpotifyWatcher
+            // re-applies the route itself when Spotify reappears.
             description.isProcessRestoreEnabled = true
         }
+        #endif
 
         var newTap = AudioObjectID(kAudioObjectUnknown)
         try CA.check(AudioHardwareCreateProcessTap(description, &newTap),
