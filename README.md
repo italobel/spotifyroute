@@ -1,5 +1,7 @@
 # SpotifyRoute
 
+[![CI](https://github.com/italobel/spotifyroute/actions/workflows/ci.yml/badge.svg)](https://github.com/italobel/spotifyroute/actions/workflows/ci.yml)
+
 SpotifyRoute sends Spotify's audio — and only Spotify's — to an output device you
 choose, while your Mac's system default output stays exactly where it was.
 
@@ -12,12 +14,15 @@ choose, while your Mac's system default output stays exactly where it was.
 | | |
 |---|---|
 | macOS | 14.2 or later (that's the release Core Audio process taps first shipped in) |
-| Toolchain | Command Line Tools only — no Xcode install needed |
+| Toolchain | Command Line Tools for Xcode 16 or later (a Swift 6 compiler) — no Xcode install needed |
 | Spotify | The desktop client (`com.spotify.client`) |
 
-**Developed and verified only on macOS 26.6, on Apple Silicon.** It should work on
-14.2 and later, but that has not been tested — if you try it on an older release,
-the permission and self-test sections below are the places to check first.
+**Developed and verified only on macOS 26.6, on Apple Silicon.** CI additionally builds
+the project, runs the tests, and runs `build.sh` on GitHub's macOS 15 runner (Xcode 16
+toolchain, macOS 15 SDK), so it is known to *compile* against the previous SDK — but
+routing itself has not been exercised on anything older than 26.6. It should work on
+14.2 and later; if you try it on an older release, the permission and self-test
+sections below are the places to check first.
 
 Command Line Tools alone can't run XCTest or swift-testing — both require a full
 Xcode install — so this project ships its own small test harness instead of
