@@ -3,8 +3,9 @@
 SpotifyRoute sends Spotify's audio — and only Spotify's — to an output device you
 choose, while your Mac's system default output stays exactly where it was.
 
-**Screenshot: the SpotifyRoute window**
-<!-- TODO: add a screenshot of the app's window here -->
+<p align="center">
+  <img src="docs/images/window.png" width="470" alt="The SpotifyRoute window: Spotify's playback state, the current route, a list of output devices with the system default greyed out, and a Turn Off button">
+</p>
 
 ## Requirements
 
@@ -206,6 +207,10 @@ Launchpad, or `open ~/Applications/SpotifyRoute.app` — and it opens showing wh
 is playing, the current route, a picker for the destination device, and an on/off control.
 The menu bar item is still there too, as a fast fallback for when the window isn't open,
 but it's no longer the only way in.
+
+<p align="center">
+  <img src="docs/images/menu.png" width="620" alt="The menu bar dropdown: current route, Turn Off, a Send Spotify To submenu listing every output device, Run Self-Test, and Quit">
+</p>
 
 Closing the window does **not** quit the app — routing keeps running in the background
 exactly as before, and both the Dock icon and the menu bar item remain. Click the Dock icon
