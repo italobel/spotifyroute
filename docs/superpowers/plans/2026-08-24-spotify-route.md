@@ -1,6 +1,10 @@
 # SpotifyRoute Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Superseded in part:** this plan describes the original menu-bar-only design,
+> including `LSUIElement`/`.accessory` (no Dock icon). A later round of work (see
+> `2026-08-25-window-ui.md` and `specs/2026-08-25-window-ui-design.md`) added a
+> window and changed the app to a regular app with a Dock icon. See
+> `docs/README.md` for how to read this directory.
 
 **Goal:** Build a macOS menu-bar app plus CLI that routes Spotify's audio to a user-chosen output device using Core Audio process taps, while leaving the system default output completely untouched, toggleable from a Stream Deck button.
 

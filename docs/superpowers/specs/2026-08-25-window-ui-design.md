@@ -1,6 +1,6 @@
 # SpotifyRoute window UI — design
 
-**Status:** approved in conversation; implementation not started
+**Status:** implemented and shipped
 **Builds on:** `2026-08-24-spotify-route-design.md` (the routing engine, unchanged by this work)
 
 ## Problem
@@ -29,6 +29,15 @@ bar real estate.
 | Closing the window | Does not quit — routing continues in the background. |
 | Quitting | Explicit only: ⌘Q or the menu bar's Quit. |
 | UI framework | SwiftUI. Verified to compile with Command Line Tools alone; no Xcode. |
+
+**Framing note:** the row above frames the window as the menu bar's fallback,
+reflecting how this was scoped going in. The README describes the shipped
+reality the other way around — the window is the main way to use the app, and
+the menu bar is kept as a fast fallback for when the window isn't open — which
+is also the more accurate description of why this work happened at all: the
+menu bar was unreachable, not merely inconvenient. That shift in framing
+happened during implementation; the decision itself (keep both surfaces) did
+not change.
 
 ## Architecture
 
