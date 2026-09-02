@@ -110,9 +110,10 @@ public enum SelfTest {
                                  + "the binary is running from the signed .app bundle and that "
                                  + "Privacy settings allow audio recording), or that the tap's "
                                  + "input buffer landed at a different offset than AudioRouter "
-                                 + "assumed for this destination (see the C-1 fix in AudioRouter "
-                                 + "for why that offset varies by destination). Neither cause is "
-                                 + "more likely than the other from this signature alone.")
+                                 + "assumed for this destination (that offset depends on whether "
+                                 + "the destination device has inputs of its own — see "
+                                 + "AudioRouter). Neither cause is more likely than the other "
+                                 + "from this signature alone.")
         }
         return Outcome(callbacks: callbacks, peak: peak, passed: true,
                        detail: "routed \(callbacks) buffers to \(destination.name), peak \(peak)")

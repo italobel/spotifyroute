@@ -73,7 +73,7 @@ if args.first == "--show-audibility" {
     }
 }
 
-// ---- normal launch: menu bar app ----
+// ---- normal launch: regular app (window + Dock icon, plus a menu bar item) ----
 
 // Single-instance guard (Task 13, Step 0). A menu-bar app the user can double-click
 // WILL get launched twice, and a login agent makes that likelier still — the agent

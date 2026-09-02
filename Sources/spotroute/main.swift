@@ -78,8 +78,11 @@ guard connected == 0 else {
     FileHandle.standardError.write("""
         error: SpotifyRoute is not running (no socket at \(socketPath))
 
-        Start it with:  open /Applications/SpotifyRoute.app
+        Start it with:  open ~/Applications/SpotifyRoute.app
         or from a build: open ./build/SpotifyRoute.app
+
+        (If you installed it system-wide with sudo, it's at
+        /Applications/SpotifyRoute.app instead.)
 
         """.data(using: .utf8)!)
     exit(1)

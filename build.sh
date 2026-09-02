@@ -17,6 +17,27 @@ AGENT_PLIST="$HOME/Library/LaunchAgents/$AGENT_LABEL.plist"
 INSTALLED_APP="$HOME/Applications/SpotifyRoute.app"
 INSTALLED_CLI="$HOME/.local/bin/spotroute"
 
+usage() {
+  cat <<EOF0
+Usage: $0 [--install | --install-login-agent | --uninstall-login-agent]
+
+  (no flag)                build only, output to build/
+  --install                 also install to ~/Applications and ~/.local/bin
+  --install-login-agent     also install and start automatically at login
+  --uninstall-login-agent   remove the login agent (no build)
+EOF0
+}
+
+case "${1:-}" in
+  ""|--install|--install-login-agent|--uninstall-login-agent)
+    ;;
+  *)
+    echo "Unknown flag: ${1}" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
 if [ "${1:-}" = "--uninstall-login-agent" ]; then
   launchctl bootout "gui/$(id -u)/$AGENT_LABEL" 2>/dev/null || true
   rm -f "$AGENT_PLIST"
@@ -65,7 +86,7 @@ Build complete.
   CLI: $OUT/spotroute
 
 Next:
-  1. open "$APP"                       # launches the menu-bar app
+  1. open "$APP"                       # launches the app; its window opens automatically
   2. "$OUT/spotroute" list             # show available output devices
   3. "$OUT/spotroute" use <device-uid> # pick where Spotify should play
   4. "$OUT/spotroute" on               # route it
